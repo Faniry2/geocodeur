@@ -28,6 +28,7 @@ Chaque jour, la BAN publie un **bundle** (`addok-france-bundle.zip`, ~2,4 Go) qu
 | `addok-redis/` | Image Redis qui charge l'index |
 | `addok-standalone/` | Variante tout-en-un (un seul conteneur) qui télécharge elle-même les données |
 | `build-package/` | Construction de son propre bundle à partir de fichiers `.ndjson.gz` |
+| `install.sh` | Installeur : prérequis, images, données, démarrage, cron |
 | `update-data.sh` | Mise à jour automatique des données BAN |
 | `tests/smoke.sh` | Tests fonctionnels d'une instance |
 
@@ -55,14 +56,27 @@ Les images fonctionnent sur `linux/amd64` et `linux/arm64` (Apple Silicon, Raspb
 - 15 Go d'espace disque : les données, plus une copie temporaire pendant les mises à jour
 - `curl`, `unzip` et `flock` (présents sur la plupart des distributions Linux)
 
-### Démarrer
+### Installer et démarrer
 
 ```bash
-docker compose build      # construit les images (quelques minutes, une seule fois)
-./update-data.sh          # télécharge les données BAN et démarre l'instance
+./install.sh
 ```
 
-Le premier lancement télécharge ~2,4 Go. L'instance met ensuite 30 secondes à 2 minutes à charger les données en mémoire.
+L'installeur fait tout, dans l'ordre :
+1. vérifie les prérequis : Docker, Compose v2, outils, RAM, disque ;
+2. construit les images ;
+3. télécharge ou met à jour les données BAN (~2,4 Go au premier lancement) ;
+4. démarre l'instance et attend qu'elle réponde (30 secondes à 2 minutes de chargement en mémoire) ;
+5. installe la tâche cron de mise à jour automatique (tous les jours à 5h30).
+
+On peut le relancer sans risque, par exemple pour redémarrer après un `docker compose down` : il ne refait que ce qui manque.
+
+| Option | Effet |
+|---|---|
+| `--cron=daily` | mise à jour tous les jours à 5h30 (défaut) |
+| `--cron=weekly` | mise à jour tous les lundis à 5h30 |
+| `--cron=none` | pas de mise à jour automatique (retire la tâche si elle existe) |
+| `-y` | ne pose aucune question |
 
 ### Tester
 
@@ -86,13 +100,7 @@ tests/smoke.sh            # série de tests fonctionnels
 ./update-data.sh --force   # réinstalle même si les données sont à jour
 ```
 
-Pour automatiser la mise à jour, ajoutez une tâche cron (`crontab -e`). La BAN publie vers 3h20 UTC :
-
-```cron
-30 5 * * * /chemin/vers/le/projet/update-data.sh >> /chemin/vers/le/projet/logs/update-data.log 2>&1
-```
-
-Le redémarrage coupe le service 1 à 2 minutes. L'utilisateur qui lance le script doit pouvoir utiliser Docker.
+`install.sh` installe la tâche cron qui lance ce script automatiquement. La BAN publie vers 3h20 UTC, d'où l'horaire de 5h30. Le journal est dans `logs/update-data.log`. Le redémarrage coupe le service 1 à 2 minutes. L'utilisateur qui lance le script doit pouvoir utiliser Docker.
 
 ## Paramètres
 

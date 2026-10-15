@@ -38,6 +38,7 @@ Projet dérivé de `BaseAdresseNationale/addok-docker` (plus maintenu depuis le 
 | `addok-standalone/` | Variante tout-en-un (supervisord). Elle télécharge le bundle seulement s'il a changé |
 | `build-package/` | Fabrication de son propre bundle à partir de fichiers `.ndjson.gz` |
 | `addok-data/` (non versionné) | Les données installées |
+| `install.sh` | Installeur en une commande : prérequis, images, données, démarrage (même si les données sont à jour), cron |
 | `update-data.sh` | Mise à jour automatique des données BAN, avec retour aux anciennes données en cas d'échec |
 | `tests/smoke.sh` | 9 tests fonctionnels (recherche, fautes, autocomplétion, inverse, filtres, CSV) |
 | `.github/workflows/ci.yml` | Tests à chaque modification, compatibilité BAN chaque semaine, publication des images |
@@ -97,13 +98,26 @@ Les extensions d'addok :
 - README réécrit : fonctionnement, installation, mise à jour automatique, paramètres, licences.
 - Validation finale sur une copie propre du projet : toutes les étapes du CI passent en local.
 
+**15/10/2026 : installeur**
+- Création de `install.sh`, qui fait tout en une commande :
+  1. vérifie les prérequis ;
+  2. construit les images ;
+  3. télécharge ou met à jour les données ;
+  4. démarre l'instance dans tous les cas et vérifie qu'elle répond ;
+  5. installe la tâche cron.
+- Options `--cron=daily|weekly|none` et `-y`. On peut le relancer sans risque : la tâche cron est remplacée, jamais dupliquée, et les autres tâches de l'utilisateur sont conservées.
+- Testé (avec un faux crontab et le bundle de Paris) :
+  - installation neuve ;
+  - relance avec l'instance arrêtée et les données à jour (elle redémarre) ;
+  - passage en hebdomadaire ;
+  - retrait du cron ;
+  - exécution de la ligne cron dans l'environnement minimal de cron.
+
 ## Reste à faire
 
 ### Prioritaire
-- [ ] **Premier lancement réel avec le bundle France** : `docker compose build && ./update-data.sh`. Il faut environ 6 Go de RAM libres ; il n'y en avait que 5 pendant les tests, à cause des conteneurs `cmz-local`. Seules les données de Paris ont été testées jusqu'ici.
-- [ ] Planifier la mise à jour automatique avec cron (`crontab -e`) :
-      `30 5 * * * /home/rapadango/geocodeur_infostat/addok-docker-master/update-data.sh >> /home/rapadango/geocodeur_infostat/addok-docker-master/logs/update-data.log 2>&1`
-- [ ] Choisir la fréquence : quotidienne (2,4 Go par jour) ou hebdomadaire
+- [ ] **Premier lancement réel avec le bundle France** : `./install.sh`. Il faut environ 6 Go de RAM libres ; l'installeur prévient s'il en manque. Seules les données de Paris ont été testées jusqu'ici. Ce lancement installe aussi le vrai cron.
+- [ ] Choisir la fréquence : quotidienne (`./install.sh`, 2,4 Go par jour) ou hebdomadaire (`./install.sh --cron=weekly`)
 - [ ] Alerte en cas d'échec de la mise à jour (e-mail ou supervision du code retour)
 
 ### Projet

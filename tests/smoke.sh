@@ -4,7 +4,7 @@
 B=${1:-http://localhost:7878}
 ok=0; ko=0
 check() { if eval "$2" >/dev/null 2>&1; then echo "OK  $1"; ok=$((ok+1)); else echo "KO  $1"; ko=$((ko+1)); fi; }
-j() { curl -sf "$B$1" | python3 -c "import sys,json;d=json.load(sys.stdin);$2"; }
+j() { curl -sf "$B$1" | python3 -c "import sys,json;d=json.load(sys.stdin);$2" 2>/dev/null; }
 
 echo "health: $(curl -s $B/health)"
 echo "search: $(j '/search?q=1+rue+de+la+paix+paris&limit=1' 'p=d["features"][0]["properties"];print(p["label"],round(p["score"],2))')"
