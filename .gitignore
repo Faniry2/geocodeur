@@ -1,5 +1,7 @@
 # Données (téléchargées ou générées)
 /addok-data
+/addok-data-blue
+/addok-data-green
 /addok-data.new
 /addok-data.old
 /addok-france-bundle.zip.part
@@ -7,6 +9,12 @@
 /dist
 /logs
 /.update-data.lock
+
+# État de l'instance (écrit par update-data.sh) et configuration locale
+/.env
+/run
+/alert.conf
+/alert.conf.tmp
 
 # macOS
 .DS_Store

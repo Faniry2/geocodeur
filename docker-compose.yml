@@ -1,36 +1,89 @@
 name: geocodeur-infostat
 
+# Architecture bleu/vert : le proxy (port 7878) envoie les requêtes à l'instance active,
+# « blue » ou « green » (chacune = addok + redis + ses données dans addok-data-<couleur>/).
+# Pendant une mise à jour, update-data.sh démarre l'autre instance avec les nouvelles données,
+# bascule le proxy quand elle répond, puis arrête l'ancienne : pas de coupure.
+#
+# L'instance active est choisie par COMPOSE_PROFILES dans .env (écrit par update-data.sh) :
+# « docker compose up -d », « down », « logs »... s'appliquent donc au proxy et à l'instance active.
+#
 # Les conteneurs tournent avec l'utilisateur de l'hôte (1000 par défaut) pour pouvoir lire
-# les fichiers de addok-data/ et écrire dans logs/ sans sudo.
+# les fichiers de données et écrire dans logs/ sans sudo.
 # Autre utilisateur : HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d
 
+# Les images sont construites par les services « blue » seulement : construites deux fois sous le
+# même nom, elles changeraient d'identifiant à chaque fois, et Compose recréerait les conteneurs
+# (coupure) à chaque « docker compose build ». Les services « green » les réutilisent.
+
+x-addok: &addok
+  image: geocodeur-infostat/addok:1.3.2
+  user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+  restart: unless-stopped
+
+x-addok-env: &addok-env
+  WORKERS: 1
+  WORKER_TIMEOUT: 30
+  LOG_QUERIES: 1
+  LOG_NOT_FOUND: 1
+  SLOW_QUERIES: 200
+
+x-redis: &redis
+  image: geocodeur-infostat/addok-redis:8.10
+  user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+  # Pas de "ports" : Redis n'a pas de mot de passe et ne doit être joignable que par addok
+  restart: unless-stopped
+
 services:
-  addok:
-    build: ./addok
-    image: geocodeur-infostat/addok:1.3.2
-    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+  proxy:
+    build: ./proxy
+    image: geocodeur-infostat/proxy:1.30
     ports:
-      - "7878:7878"
+      - "${ADDOK_PORT:-7878}:7878"
     volumes:
-      - ./addok-data/addok.conf:/etc/addok/addok.conf:ro
-      - ./addok-data/addok.db:/data/addok.db:ro
-      - ./logs:/logs
-    environment:
-      WORKERS: 1
-      WORKER_TIMEOUT: 30
-      LOG_QUERIES: 1
-      LOG_NOT_FOUND: 1
-      SLOW_QUERIES: 200
-    depends_on:
-      redis:
-        condition: service_healthy
+      - ./run:/etc/nginx/active:ro
     restart: unless-stopped
 
-  redis:
-    build: ./addok-redis
-    image: geocodeur-infostat/addok-redis:8.10
-    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
-    # Pas de "ports" : Redis n'a pas de mot de passe et ne doit être joignable que par addok
+  addok-blue:
+    <<: *addok
+    build: ./addok
+    profiles: [blue]
+    environment:
+      <<: *addok-env
+      REDIS_HOST: redis-blue
     volumes:
-      - ./addok-data/dump.rdb:/data/dump.rdb:ro
-    restart: unless-stopped
+      - ./addok-data-blue/addok.conf:/etc/addok/addok.conf:ro
+      - ./addok-data-blue/addok.db:/data/addok.db:ro
+      - ./logs:/logs
+    depends_on:
+      redis-blue:
+        condition: service_healthy
+
+  redis-blue:
+    <<: *redis
+    build: ./addok-redis
+    profiles: [blue]
+    volumes:
+      - ./addok-data-blue/dump.rdb:/data/dump.rdb:ro
+
+  addok-green:
+    <<: *addok
+    pull_policy: never
+    profiles: [green]
+    environment:
+      <<: *addok-env
+      REDIS_HOST: redis-green
+    volumes:
+      - ./addok-data-green/addok.conf:/etc/addok/addok.conf:ro
+      - ./addok-data-green/addok.db:/data/addok.db:ro
+      - ./logs:/logs
+    depends_on:
+      redis-green:
+        condition: service_healthy
+
+  redis-green:
+    <<: *redis
+    pull_policy: never
+    profiles: [green]
+    volumes:
+      - ./addok-data-green/dump.rdb:/data/dump.rdb:ro

@@ -1,0 +1,11 @@
+# Alertes Discord du géocodeur. Copier ce fichier en alert.conf (non versionné) :
+#   cp alert.conf.example alert.conf && chmod 600 alert.conf
+# ou utiliser : ./install.sh --discord-webhook=URL
+# Tester : ./notify.sh --test
+
+# Webhook du salon (Discord : Paramètres du salon > Intégrations > Webhooks > Copier l'URL).
+# Ne jamais le versionner : quiconque a cette URL peut écrire dans le salon.
+DISCORD_WEBHOOK_URL=
+
+# 1 : prévenir aussi quand une mise à jour réussit (par défaut : seulement en cas d'échec)
+ALERT_ON_SUCCESS=0

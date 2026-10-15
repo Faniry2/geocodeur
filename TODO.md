@@ -11,6 +11,11 @@ Projet dérivé de `BaseAdresseNationale/addok-docker` (plus maintenu depuis le 
 ```
            requêtes HTTP (port 7878)
                      │
+              ┌──────▼──────┐
+              │    proxy    │  envoie vers l'instance active : blue ou green
+              │   (nginx)   │  (chaque instance = addok + redis + ses données)
+              └──────┬──────┘
+                     │
               ┌──────▼──────┐   lit l'index    ┌───────────────┐
               │    addok    │ ───────────────► │     redis     │
               │  (gunicorn) │                  │ (index en RAM)│
@@ -20,7 +25,8 @@ Projet dérivé de `BaseAdresseNationale/addok-docker` (plus maintenu depuis le 
               │  addok.db   │                  │   dump.rdb    │
               │  (SQLite)   │                  │  (index)      │
               └─────────────┘                  └───────────────┘
-                ▲ addok-data/ = bundle BAN décompressé (+ addok.conf)
+                ▲ addok-data-blue/ ou addok-data-green/ = bundle BAN décompressé
+                  (addok-data est un lien vers le dossier de l'instance active)
 ```
 
 **Pourquoi les données sont à part :** le logiciel change rarement et les adresses changent chaque jour. Les données restent donc dans un dossier monté (`addok-data/`), et non dans les images. L'index est déjà calculé par la BAN, ce qui évite plusieurs heures de calcul.
@@ -32,14 +38,19 @@ Projet dérivé de `BaseAdresseNationale/addok-docker` (plus maintenu depuis le 
 
 | Dossier / fichier | Rôle |
 |---|---|
-| `docker-compose.yml` | Instance principale : services `addok` et `redis` |
+| `docker-compose.yml` | Le proxy et les deux instances : `addok-blue` + `redis-blue`, `addok-green` + `redis-green`. L'instance active est choisie par `COMPOSE_PROFILES` dans `.env` |
+| `proxy/` | Image nginx (sans root) devant les instances. `run/active.conf` (généré) indique l'instance active |
 | `addok/` | Image du serveur : Python 3.14, addok et ses extensions, gunicorn. Elle sert aussi d'importeur (`docker-entrypoint.sh serve`, sinon commande `addok`) |
 | `addok-redis/` | Image Redis 8.10 avec une config minimale. Elle charge `dump.rdb` au démarrage |
 | `addok-standalone/` | Variante tout-en-un (supervisord). Elle télécharge le bundle seulement s'il a changé |
 | `build-package/` | Fabrication de son propre bundle à partir de fichiers `.ndjson.gz` |
-| `addok-data/` (non versionné) | Les données installées |
-| `install.sh` | Installeur en une commande : prérequis, images, données, démarrage (même si les données sont à jour), cron |
-| `update-data.sh` | Mise à jour automatique des données BAN, avec retour aux anciennes données en cas d'échec |
+| `addok-data-blue/`, `addok-data-green/` (non versionnés) | Les données de chaque instance ; seule celle de l'instance active existe en temps normal |
+| `install.sh` | Installeur en une commande : prérequis, images, données, démarrage (même si les données sont à jour), cron, webhook Discord |
+| `update-data.sh` | Mise à jour automatique des données BAN, sans coupure si la RAM le permet, alerte Discord en cas d'échec |
+| `lib/instance.sh` | Fonctions communes aux scripts : instances, bascule du proxy, migration, alertes |
+| `check-health.sh` | Surveillance toutes les 5 minutes (`/health` + recherche de test), alerte Discord en cas de panne et au retour |
+| `notify.sh` | Envoi d'un message Discord (`./notify.sh --test`) |
+| `alert.conf` (non versionné) | Webhook Discord, voir `alert.conf.example` |
 | `tests/smoke.sh` | 9 tests fonctionnels (recherche, fautes, autocomplétion, inverse, filtres, CSV) |
 | `.github/workflows/ci.yml` | Tests à chaque modification, compatibilité BAN chaque semaine, publication des images |
 
@@ -113,25 +124,50 @@ Les extensions d'addok :
   - retrait du cron ;
   - exécution de la ligne cron dans l'environnement minimal de cron.
 
+**15/10/2026 : premier lancement réel (France entière)**
+- `./install.sh` : bundle France téléchargé (16 minutes), mais le conteneur addok restait « unhealthy ». Cause : le `addok.conf` actuel de la BAN ne se termine pas par un saut de ligne, et la première option ajoutée par `docker-entrypoint.sh` était collée à sa dernière ligne (`SQLITE_DB_PATH = 'dist/addok.db'LOG_DIR = '/logs'`), ce qui fait une erreur de syntaxe Python. Les workers gunicorn plantaient en boucle. Le bug existait déjà dans addok-docker. Correction : un saut de ligne est ajouté après la copie.
+- 9 tests sur 9 avec les données de France. Redis occupe environ 3,1 Go de RAM (et non 6).
+- Fréquence choisie : **quotidienne** (cron tous les jours à 5h30).
+
+**15/10/2026 : mise à jour sans coupure, alertes, licence**
+- Architecture **bleu/vert** : un proxy nginx (image `nginx-unprivileged`, sans root) sur le port 7878 et deux instances `blue` et `green`, avec chacune son addok, son Redis et ses données (`addok-data-blue/`, `addok-data-green/`). Une seule tourne en temps normal.
+- `update-data.sh` prépare les nouvelles données dans le dossier de l'instance arrêtée, la démarre, vérifie qu'elle répond, bascule le proxy (`nginx -s reload` : les requêtes en cours se terminent), puis arrête l'ancienne. Si les nouvelles données ne fonctionnent pas, l'ancienne instance n'a jamais cessé de répondre.
+- **Garde-fou RAM** : deux instances demandent deux fois plus de mémoire pendant 1 à 2 minutes. Le script compare la mémoire de Redis + 30 % + 512 Mo avec la RAM disponible. S'il n'y en a pas assez, il fait la mise à jour avec coupure (arrêt de l'ancienne instance d'abord, puis redémarrage de l'ancienne si les nouvelles données échouent). Forçable avec `HOT_SWAP=always|never`. Sur la machine actuelle : 4,5 Go nécessaires pour environ 4,3 Go disponibles en journée, donc la bascule se fait aujourd'hui avec coupure. Libérer un peu de RAM suffit pour passer sans coupure.
+- Migration automatique de l'ancienne organisation (`addok-data/` → `addok-data-blue/`, anciens conteneurs remplacés), faite par `install.sh` ou `update-data.sh`. Faite sur l'instance réelle (une coupure d'environ 20 secondes, une seule fois).
+- **Alertes Discord** : en cas d'échec de mise à jour, un message donne la cause et l'état de l'instance. Webhook dans `alert.conf` (non versionné, droits 600), configurable avec `./install.sh --discord-webhook=URL`. `./notify.sh --test` pour tester ; `ALERT_ON_SUCCESS=1` pour être prévenu aussi des réussites.
+- `ADDOK_PORT` dans `.env` pour changer le port.
+- Testé sur une copie isolée avec les données de Paris :
+  - migration depuis l'ancienne organisation : 9 tests sur 9 ;
+  - mise à jour sans coupure sous requêtes continues : **0 requête en échec sur 63** ;
+  - mise à jour avec coupure (`HOT_SWAP=never`) : 8 secondes de coupure avec Paris ;
+  - bundle cassé, sans coupure : rejeté, 0 requête en échec, alerte envoyée ;
+  - bundle cassé, avec coupure : retour automatique aux anciennes données, alerte envoyée ;
+  - `docker compose down` / `up -d` ;
+  - échappement JSON des messages (guillemets, antislash, retours à la ligne).
+- Bug trouvé lors du déploiement réel : sans fichier `.env` (première exécution), `install.sh` s'arrêtait sans message. Corrigé.
+- CI : construction avec `--profile '*'`, tests de la mise à jour sans coupure (0 échec exigé) et du bundle cassé, publication de l'image `proxy`.
+- **Licence MIT** pour le projet (fichier `LICENSE`, au nom de Faniry2).
+- **addok-csv conservé** avec notre correctif : il fonctionne, et la construction de l'image échoue si le correctif ne s'applique plus.
+
+**15/10/2026 : surveillance de l'instance**
+- `check-health.sh`, lancé par cron toutes les 5 minutes (installé par `install.sh`, `--watch=off` pour le retirer). Il interroge `/health` et fait une recherche de test à travers le proxy. Une panne est déclarée après 3 essais ratés à 20 secondes d'intervalle. L'alerte Discord donne la cause (proxy arrêté, instance injoignable (502), recherche vide) et l'état des conteneurs. Il n'y a qu'une alerte par panne, puis un rappel toutes les 6 heures, et un message au retour du service. Rien n'est vérifié pendant une mise à jour : le script teste le verrou de `update-data.sh` sans le garder. L'état est dans `run/health-state`.
+- Testé avec un faux webhook : instance saine, panne, panne qui continue (pas de doublon), rappel après 6 h, retour du service, mise à jour en cours. Exécution testée aussi dans l'environnement minimal de cron. Le cas 502 (proxy en marche, addok arrêté) n'a pas été provoqué sur l'instance réelle.
+- `install.sh` : les tâches cron sont gérées par une fonction commune (marqueur + ligne), la tâche de mise à jour et celle de surveillance sont indépendantes.
+- **Bug trouvé : relancer `install.sh` redémarrait l'instance** (coupure d'environ 20 secondes), parce que les images changeaient d'identifiant à chaque construction. Deux causes : addok et Redis étaient construits deux fois sous le même nom (services blue et green, avec des étiquettes différentes), et BuildKit ajoute une attestation de provenance horodatée. Corrections : seuls les services blue construisent les images, les services green les réutilisent (`pull_policy: never`, pour ne jamais télécharger une image du même nom sur Docker Hub), et `install.sh` construit avec `BUILDX_NO_DEFAULT_ATTESTATIONS=1`. Vérifié : identifiants stables et conteneurs non recréés.
+
 ## Reste à faire
 
-### Prioritaire
-- [ ] **Premier lancement réel avec le bundle France** : `./install.sh`. Il faut environ 6 Go de RAM libres ; l'installeur prévient s'il en manque. Seules les données de Paris ont été testées jusqu'ici. Ce lancement installe aussi le vrai cron.
-- [ ] Choisir la fréquence : quotidienne (`./install.sh`, 2,4 Go par jour) ou hebdomadaire (`./install.sh --cron=weekly`)
-- [ ] Alerte en cas d'échec de la mise à jour (e-mail ou supervision du code retour)
-
 ### Projet
-- [ ] Choisir le nom définitif du projet et renommer le dossier `addok-docker-master` (le nom provisoire est `geocodeur-infostat`, utilisé pour les images)
+- [ ] Choisir le nom définitif du projet et renommer le dossier `addok-docker-master` (le nom provisoire est `geocodeur-infostat`, utilisé pour les images, les conteneurs et le marqueur cron). Attention : renommer le dossier casse la ligne cron, il faut relancer `./install.sh` après
 - [ ] Créer le dépôt git distant (GitHub) et y pousser le projet. La CI n'a pas encore tourné sur GitHub, elle a seulement été rejouée en local
-- [ ] Licence : il ne reste presque rien des fichiers d'addok-docker (seul `build-package/addok.conf` reprend la config BAN). Choisir la licence du projet
-- [ ] Tester les images en `linux/arm64` (la CI les construit, mais elles n'ont pas été testées sur une vraie machine ARM)
+- [ ] Vérifier le titulaire du copyright dans `LICENSE` (Faniry2 ou l'organisation)
+- [ ] Tester les images en `linux/arm64` sur une vraie machine ARM (la CI les construit sans les tester ; la machine actuelle n'a pas l'émulation ARM)
 
-### Décisions à prendre
-- [ ] **addok-csv est abandonné.** Ses auteurs recommandent [addok-server](https://github.com/livingdata-co/addok-server), un serveur Node.js. Il faut choisir entre garder addok-csv avec notre correctif, qui fonctionne aujourd'hui, et migrer vers addok-server, ce qui change l'architecture
-- [ ] Supprimer la coupure de 1 à 2 minutes pendant les mises à jour : démarrer une 2ᵉ instance, puis basculer le trafic quand elle est prête
-- [ ] Redis 8 est sous AGPLv3, RSALv2 ou SSPLv1. Rien à faire en interne ; si ça pose problème, Valkey (licence BSD) peut le remplacer
+### Améliorations possibles
+- [ ] Si la RAM manque souvent pour la bascule sans coupure, augmenter la RAM de la machine
 
 ### À surveiller
+- [ ] Redis 8 est sous AGPLv3, RSALv2 ou SSPLv1. Rien à faire en interne ; si ça pose problème, Valkey (licence BSD) peut le remplacer
 - [ ] La CI vérifie chaque semaine (`compat-ban`) que le bundle BAN du moment fonctionne toujours avec nos images : surveiller les échecs, par exemple si la BAN change de version de Redis ou d'addok
 - [ ] Passer à Python 3.15 quand addok le prendra en charge
 - [ ] Suivre les nouvelles versions d'addok : https://github.com/addok/addok/blob/master/CHANGELOG.md

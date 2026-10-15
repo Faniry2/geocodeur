@@ -17,6 +17,9 @@ fi
 # Copie de la configuration avec les options de logs, dans un emplacement accessible en écriture
 PATCHED_CONFIG=/tmp/addok.patched.conf
 cp "$ADDOK_CONFIG_MODULE" "$PATCHED_CONFIG"
+# Le addok.conf de la BAN ne se termine pas toujours par un saut de ligne : sans celui-ci,
+# la première option ajoutée serait collée à la dernière ligne (erreur de syntaxe Python)
+echo >> "$PATCHED_CONFIG"
 
 LOG_DIR=${LOG_DIR:-/logs}
 if [[ -w "$LOG_DIR" ]]; then
