@@ -1,23 +1,36 @@
-version: '2'
+name: geocodeur-infostat
+
+# Les conteneurs tournent avec l'utilisateur de l'hôte (1000 par défaut) pour pouvoir lire
+# les fichiers de addok-data/ et écrire dans logs/ sans sudo.
+# Autre utilisateur : HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d
 
 services:
   addok:
-    image: etalab/addok
+    build: ./addok
+    image: geocodeur-infostat/addok:1.3.2
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     ports:
-    - "7878:7878"
+      - "7878:7878"
     volumes:
-    - ./addok-data/addok.conf:/etc/addok/addok.conf
-    - ./addok-data/addok.db:/data/addok.db
-    - ./logs:/logs
-    links:
-    - addok-redis:redis
+      - ./addok-data/addok.conf:/etc/addok/addok.conf:ro
+      - ./addok-data/addok.db:/data/addok.db:ro
+      - ./logs:/logs
     environment:
       WORKERS: 1
       WORKER_TIMEOUT: 30
       LOG_QUERIES: 1
       LOG_NOT_FOUND: 1
       SLOW_QUERIES: 200
-  addok-redis:
-    image: etalab/addok-redis
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    build: ./addok-redis
+    image: geocodeur-infostat/addok-redis:8.10
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    # Pas de "ports" : Redis n'a pas de mot de passe et ne doit être joignable que par addok
     volumes:
-    - ./addok-data/dump.rdb:/data/dump.rdb
+      - ./addok-data/dump.rdb:/data/dump.rdb:ro
+    restart: unless-stopped

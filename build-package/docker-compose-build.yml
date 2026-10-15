@@ -1,20 +1,25 @@
-version: '2'
+name: geocodeur-infostat-build
+
+# Construction d'un bundle (addok.db + dump.rdb + addok.conf) à partir de fichiers .ndjson.gz.
+# Utilisé par build-package/run.sh, qui fournit HOST_UID / HOST_GID.
 
 services:
-  addok-importer:
-    build:
-      context: ../addok-importer
-    stdin_open: true
+  importer:
+    build: ../addok
+    image: geocodeur-infostat/addok:1.3.2
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    profiles: [tools]
+    entrypoint: ["addok"]
+    volumes:
+      - ./addok.conf:/etc/addok/addok.conf:ro
+      - ../dist:/data
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    build: ../addok-redis
+    image: geocodeur-infostat/addok-redis:8.10
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     volumes:
       - ../dist:/data
-    links:
-      - addok-importer-redis:redis
-  addok-importer-redis:
-    image: redis:4
-    volumes:
-      - ../dist:/data
-  addok-importer-redis-save:
-    image: redis:7
-    command: redis-cli -h redis -p 6379 shutdown save
-    links:
-      - addok-importer-redis:redis

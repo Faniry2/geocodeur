@@ -1,88 +1,145 @@
-# Conteneurs Addok pour Docker
+# Géocodeur Infostat
 
-Ces images permettent de simplifier grandement la mise en place d'une instance [addok](https://github.com/addok/addok) avec les données de références diffusées par la [Base Adresse Nationale](https://adresse.data.gouv.fr).
+Une instance [addok](https://github.com/addok/addok) prête à l'emploi dans Docker, alimentée par les données de la [Base Adresse Nationale](https://adresse.data.gouv.fr) (BAN) et mise à jour automatiquement.
 
-## Plateformes
+Addok est le moteur de géocodage de l'API officielle api-adresse.data.gouv.fr :
+- **géocodage** : une adresse devient des coordonnées GPS (`/search`) ;
+- **géocodage inverse** : des coordonnées GPS deviennent une adresse (`/reverse`) ;
+- **géocodage de fichiers CSV** (`/search/csv`, `/reverse/csv`).
 
-Les images Docker sont disponibles pour `linux/amd64` et `linux/arm64`. Elles sont donc parfaitement utilisables sur Apple Silicon ou Raspberry Pi sans couche d’émulation.
+Il tolère les fautes de frappe et fait de l'autocomplétion.
 
-## Composants installés
+Ce projet est dérivé de [BaseAdresseNationale/addok-docker](https://github.com/BaseAdresseNationale/addok-docker), qui n'est plus maintenu depuis 2022. Le suivi du travail est dans [TODO.md](TODO.md).
 
-| Nom du composant | Version |
-| --- | --- |
-| `redis` | `7.x` |
-| `python` | `3.10.x` |
-| `addok` | `1.0.3` |
-| `addok-fr` | `1.0.1` |
-| `addok-france` | `1.1.3` |
-| `addok-csv` | `1.0.1` |
-| `addok-sqlite-store` | `1.0.1` |
-| `gunicorn` | `20.1.0` |
+## Fonctionnement
 
-## Guides d'installation
-
-Les guides suivants ont été rédigés pour un environnement Linux ou Mac. Ils peuvent être adaptés pour Windows.
-
-### Pré-requis
-
-* Au moins 6 Go de RAM disponible (à froid)
-* 8 Go d'espace disque disponible (hors logs)
-* [Docker CE 1.10+](https://docs.docker.com/engine/installation/)
-* [Docker Compose 1.10+](https://docs.docker.com/compose/install/)
-* `unzip` ou équivalent
-* `wget` ou équivalent
-
-### Installer une instance avec les données de la Base Adresse Nationale
-
-Tout d'abord placez vous dans un dossier de travail, appelez-le par exemple `ban`.
-
-#### Télécharger les données pré-indexées
-
-```bash
-wget https://adresse.data.gouv.fr/data/ban/adresses/latest/addok/addok-france-bundle.zip
+```
+requêtes HTTP :7878 ──► addok (gunicorn) ──► redis (index en mémoire, chargé depuis dump.rdb)
+                              │
+                              └──► addok.db (SQLite : fiches complètes des adresses)
 ```
 
-#### Décompresser l'archive
+Chaque jour, la BAN publie un **bundle** (`addok-france-bundle.zip`, ~2,4 Go) qui contient l'index déjà calculé. Le script `update-data.sh` le télécharge dans `addok-data/` et redémarre l'instance.
+
+| Élément | Rôle |
+|---|---|
+| `docker-compose.yml` | Instance principale : `addok` + `redis` |
+| `addok/` | Image du serveur addok. Elle sert aussi d'importeur pour `build-package` |
+| `addok-redis/` | Image Redis qui charge l'index |
+| `addok-standalone/` | Variante tout-en-un (un seul conteneur) qui télécharge elle-même les données |
+| `build-package/` | Construction de son propre bundle à partir de fichiers `.ndjson.gz` |
+| `update-data.sh` | Mise à jour automatique des données BAN |
+| `tests/smoke.sh` | Tests fonctionnels d'une instance |
+
+## Composants
+
+| Composant | Version |
+|---|---|
+| Python | 3.14 (Debian 13 « trixie ») |
+| Redis | 8.10 |
+| addok | 1.3.2 |
+| addok-fr | 1.1.0 |
+| addok-france | 1.2.0 |
+| addok-csv | 1.1.0 (plus maintenu, corrigé dans l'image pour addok 1.3) |
+| addok-sqlite-store | 1.1.0 |
+| gunicorn | 26.2.0 |
+
+Les images fonctionnent sur `linux/amd64` et `linux/arm64` (Apple Silicon, Raspberry Pi 64 bits).
+
+## Installation
+
+### Prérequis
+
+- Docker Engine 24 ou plus récent, avec le plugin Docker Compose v2 (`docker compose`)
+- 6 Go de RAM disponibles
+- 15 Go d'espace disque : les données, plus une copie temporaire pendant les mises à jour
+- `curl`, `unzip` et `flock` (présents sur la plupart des distributions Linux)
+
+### Démarrer
 
 ```bash
-mkdir addok-data
-unzip -d addok-data addok-france-bundle.zip
+docker compose build      # construit les images (quelques minutes, une seule fois)
+./update-data.sh          # télécharge les données BAN et démarre l'instance
 ```
 
-#### Télécharger le fichier Compose
+Le premier lancement télécharge ~2,4 Go. L'instance met ensuite 30 secondes à 2 minutes à charger les données en mémoire.
 
-```bash
-wget https://raw.githubusercontent.com/BaseAdresseNationale/addok-docker/master/docker-compose.yml
-```
-
-#### Démarrer l'instance
-
-Suivant votre environnement, `sudo` peut être nécessaire pour les commandes suivantes.
-
-```bash
-# Attachée au terminal
-docker-compose up
-
-# ou en arrière-plan
-docker-compose up -d
-```
-
-Suivant les performances de votre machine, l'instance mettra entre 30 secondes et 2 minutes à démarrer effectivement, le temps de charger les données dans la mémoire vive.
-
-* 90 secondes sur une VPS-SSD-3 OVH (2 vCPU, 8 Go)
-* 50 secondes sur une VM EG-15 OVH (4 vCPU, 15 Go)
-
-Par défaut l'instance écoute sur le port `7878`.
-
-#### Tester l'instance
+### Tester
 
 ```bash
 curl "http://localhost:7878/search?q=1+rue+de+la+paix+paris"
+curl "http://localhost:7878/reverse?lon=2.3316&lat=48.8687"
+curl "http://localhost:7878/health"
+tests/smoke.sh            # série de tests fonctionnels
 ```
 
-### Paramètres avancés
+## Garder les données à jour
 
-| Nom du paramètre | Description |
-| ----- | ----- |
-| `WORKERS` | Nombre de workers addok à lancer. Valeur par défaut : `1`. |
-| `WORKER_TIMEOUT` | [Durée maximale allouée à un worker](http://docs.gunicorn.org/en/0.17.2/configure.html#timeout) pour effectuer une opération de géocodage. Valeur par défaut : `30`. |
+`update-data.sh` :
+1. compare la date du bundle publié par la BAN avec celle des données installées, et s'arrête s'il n'y a rien de nouveau ;
+2. télécharge et vérifie le nouveau bundle pendant que l'instance continue de répondre ;
+3. bascule sur les nouvelles données, redémarre et vérifie qu'une recherche fonctionne ;
+4. **en cas de problème, remet automatiquement les anciennes données en place**.
+
+```bash
+./update-data.sh --check   # indique seulement si une mise à jour est disponible (code retour 10)
+./update-data.sh --force   # réinstalle même si les données sont à jour
+```
+
+Pour automatiser la mise à jour, ajoutez une tâche cron (`crontab -e`). La BAN publie vers 3h20 UTC :
+
+```cron
+30 5 * * * /chemin/vers/le/projet/update-data.sh >> /chemin/vers/le/projet/logs/update-data.log 2>&1
+```
+
+Le redémarrage coupe le service 1 à 2 minutes. L'utilisateur qui lance le script doit pouvoir utiliser Docker.
+
+## Paramètres
+
+À régler dans `docker-compose.yml` :
+
+| Paramètre | Description | Défaut |
+|---|---|---|
+| `WORKERS` | Nombre de processus addok | `1` |
+| `WORKER_TIMEOUT` | [Durée maximale d'une requête](https://gunicorn.org/reference/settings/#timeout), en secondes | `30` |
+| `LOG_QUERIES` | `1` pour journaliser les requêtes dans `logs/queries.log` | `1` |
+| `LOG_NOT_FOUND` | `1` pour journaliser les adresses non trouvées dans `logs/notfound.log` | `1` |
+| `SLOW_QUERIES` | Journalise les requêtes plus lentes que cette durée (ms) dans `logs/slow_queries.log` | `200` |
+
+Les conteneurs tournent avec l'utilisateur `1000` de l'hôte. Pour en utiliser un autre : `HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d` (`update-data.sh` le fait automatiquement).
+
+### Filtres
+
+`type`, `citycode` et `postcode`, par exemple `/search?q=paris&type=street`. Depuis addok 1.3, un filtre accepte plusieurs valeurs : `type=street+municipality` ou `type=street&type=municipality`.
+
+## Variante tout-en-un (standalone)
+
+Un seul conteneur, qui télécharge le bundle au premier démarrage, puis seulement quand la BAN en a publié un nouveau :
+
+```bash
+docker compose build
+docker build -t geocodeur-infostat/addok-standalone:1.3.2 addok-standalone
+docker run -d -p 7878:7878 -v addok-data:/data geocodeur-infostat/addok-standalone:1.3.2
+```
+
+| Variable | Description | Défaut |
+|---|---|---|
+| `PRE_INDEXED_DATA_URL` | URL du bundle | bundle France de la BAN |
+| `UPDATE_ON_START` | `0` pour ne pas vérifier les mises à jour au démarrage | `1` |
+
+## Construire son propre bundle
+
+À partir des fichiers `.ndjson.gz` de la BAN (France entière ou un département : `https://adresse.data.gouv.fr/data/ban/adresses/latest/addok/adresses-addok-<département>.ndjson.gz`) ou de vos propres données au même format :
+
+```bash
+mkdir -p data
+curl -o data/adresses-addok-75.ndjson.gz https://adresse.data.gouv.fr/data/ban/adresses/latest/addok/adresses-addok-75.ndjson.gz
+./build-package/run.sh                                         # crée dist/prebuilt-bundle.zip
+BUNDLE_URL="file://$PWD/dist/prebuilt-bundle.zip" ./update-data.sh   # l'installe
+```
+
+## Licences et attribution
+
+- Données : **Base Adresse Nationale**, [Licence Ouverte Etalab 2.0](https://www.etalab.gouv.fr/licence-ouverte-open-licence/). L'attribution est obligatoire, par exemple « Source : Base Adresse Nationale ».
+- addok, addok-fr, addok-france, addok-csv, addok-sqlite-store : licence MIT (Etalab / contributeurs addok).
+- Redis 8 : licence AGPLv3, RSALv2 ou SSPLv1, au choix. Rien n'est à prévoir pour un usage interne.

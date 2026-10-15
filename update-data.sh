@@ -45,6 +45,8 @@ elif docker compose version >/dev/null 2>&1; then
 else
   COMPOSE_CMD=(docker-compose)
 fi
+# Les conteneurs tournent avec l'utilisateur de l'hôte (voir docker-compose.yml)
+export HOST_UID="${HOST_UID:-$(id -u)}" HOST_GID="${HOST_GID:-$(id -g)}"
 compose() { "${COMPOSE_CMD[@]}" -f "$PROJECT_DIR/docker-compose.yml" --project-directory "$PROJECT_DIR" "$@"; }
 
 # Une seule exécution à la fois (cron + lancement manuel par exemple)
@@ -116,6 +118,7 @@ wait_until_ready() {
 }
 
 restart() {
+  mkdir -p "$PROJECT_DIR/logs"
   compose up -d --force-recreate
 }
 

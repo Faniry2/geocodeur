@@ -1,29 +1,48 @@
 #!/bin/bash
+#
+# serve (par défaut) : lance le serveur HTTP addok avec gunicorn
+# autre commande     : exécute la commande addok correspondante (batch, ngrams, shell...)
 
-if [ ! -f /etc/addok/addok.conf ]; then
-  echo "Addok config file not found!"
+set -euo pipefail
+
+if [[ ! -f "$ADDOK_CONFIG_MODULE" ]]; then
+  echo "Fichier de configuration addok introuvable : $ADDOK_CONFIG_MODULE" >&2
   exit 1
 fi
 
-cp /etc/addok/addok.conf /etc/addok/addok.patched.conf
-
-echo "LOG_DIR = '/logs'" >> /etc/addok/addok.patched.conf
-
-if [ "$LOG_QUERIES" = "1" ]; then
-  echo Will log queries
-  echo "LOG_QUERIES = True" >> /etc/addok/addok.patched.conf
+if [[ "${1:-serve}" != "serve" ]]; then
+  exec addok "$@"
 fi
 
-if [ "$LOG_NOT_FOUND" = "1" ]; then
-echo Will log Not Found
-  echo "LOG_NOT_FOUND = True" >> /etc/addok/addok.patched.conf
+# Copie de la configuration avec les options de logs, dans un emplacement accessible en écriture
+PATCHED_CONFIG=/tmp/addok.patched.conf
+cp "$ADDOK_CONFIG_MODULE" "$PATCHED_CONFIG"
+
+LOG_DIR=${LOG_DIR:-/logs}
+if [[ -w "$LOG_DIR" ]]; then
+  echo "LOG_DIR = '$LOG_DIR'" >> "$PATCHED_CONFIG"
+  if [[ "${LOG_QUERIES:-0}" == "1" ]]; then
+    echo "Journalisation des requêtes activée"
+    echo "LOG_QUERIES = True" >> "$PATCHED_CONFIG"
+  fi
+  if [[ "${LOG_NOT_FOUND:-0}" == "1" ]]; then
+    echo "Journalisation des adresses non trouvées activée"
+    echo "LOG_NOT_FOUND = True" >> "$PATCHED_CONFIG"
+  fi
+  if [[ -n "${SLOW_QUERIES:-}" ]]; then
+    echo "Journalisation des requêtes lentes (> ${SLOW_QUERIES} ms) activée"
+    echo "SLOW_QUERIES = ${SLOW_QUERIES}" >> "$PATCHED_CONFIG"
+  fi
+else
+  echo "Attention : $LOG_DIR n'est pas accessible en écriture (uid $(id -u)), journaux addok désactivés" >&2
 fi
 
-if [ ! -z "$SLOW_QUERIES" ]; then
-  echo Will log slow queries
-  echo "SLOW_QUERIES = ${SLOW_QUERIES}" >> /etc/addok/addok.patched.conf
-fi
+export ADDOK_CONFIG_MODULE="$PATCHED_CONFIG"
 
-WORKERS=${WORKERS:-1}
-WORKER_TIMEOUT=${WORKER_TIMEOUT:-30}
-gunicorn -w $WORKERS --timeout $WORKER_TIMEOUT -b 0.0.0.0:7878 --access-logfile - addok.http.wsgi
+exec gunicorn \
+  --workers "${WORKERS:-1}" \
+  --timeout "${WORKER_TIMEOUT:-30}" \
+  --bind 0.0.0.0:7878 \
+  --access-logfile - \
+  --no-control-socket \
+  addok.http.wsgi
