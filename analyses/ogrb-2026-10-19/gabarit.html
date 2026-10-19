@@ -110,8 +110,8 @@ tbody tr:hover, tbody tr.sel { background: var(--sel); }
   </label>
   <label>Fond
     <select id="fond">
+      <option value="ortho" selected>Photos aériennes IGN</option>
       <option value="plan">Plan IGN</option>
-      <option value="ortho">Photos aériennes IGN</option>
       <option value="osm">OpenStreetMap</option>
     </select>
   </label>
@@ -195,7 +195,7 @@ const FONDS = {
 };
 function creerCarte(id) {
   const m = L.map(id, { preferCanvas: true, zoomSnap: 0.5 }).setView([46.6, 2.4], 6);
-  m.fond = FONDS.plan().addTo(m);
+  m.fond = FONDS.ortho().addTo(m);
   m.rendu = L.canvas({ padding: 0.5 });
   m.calque = L.layerGroup().addTo(m);
   m.selection = L.layerGroup().addTo(m);
