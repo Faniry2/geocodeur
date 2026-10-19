@@ -19,3 +19,7 @@
 # macOS
 .DS_Store
 ._*
+
+# Fichiers de données des analyses (données clients) et cartes générées à partir d'eux
+/Donnees_*
+/analyses/*/carte-comparaison.html

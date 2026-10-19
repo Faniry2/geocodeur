@@ -31,9 +31,11 @@ ENV ADDOK_CONFIG_MODULE=/etc/addok/addok.conf \
     REDIS_DB_INDEXES=0 \
     ADDOK_DOCUMENT_STORE_PYPATH=addok_sqlite_store.SQLiteStore \
     ADDOK_SQLITE_DB_PATH=/data/addok.db \
+    CSV_MAX_SIZE_MB=50 \
     PYTHONUNBUFFERED=1
 
 COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY infostat_wsgi.py /usr/local/lib/infostat/infostat_wsgi.py
 
 USER addok
 WORKDIR /data

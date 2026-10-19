@@ -40,7 +40,7 @@ Projet dérivé de `BaseAdresseNationale/addok-docker` (plus maintenu depuis le 
 |---|---|
 | `docker-compose.yml` | Le proxy et les deux instances : `addok-blue` + `redis-blue`, `addok-green` + `redis-green`. L'instance active est choisie par `COMPOSE_PROFILES` dans `.env` |
 | `proxy/` | Image nginx (sans root) devant les instances. `run/active.conf` (généré) indique l'instance active |
-| `addok/` | Image du serveur : Python 3.14, addok et ses extensions, gunicorn. Elle sert aussi d'importeur (`docker-entrypoint.sh serve`, sinon commande `addok`) |
+| `addok/` | Image du serveur : Python 3.14, addok et ses extensions, gunicorn. Elle sert aussi d'importeur (`docker-entrypoint.sh serve`, sinon commande `addok`). `infostat_wsgi.py` : point d'entrée gunicorn (taille maximale des CSV, colonnes candidat) |
 | `addok-redis/` | Image Redis 8.10 avec une config minimale. Elle charge `dump.rdb` au démarrage |
 | `addok-standalone/` | Variante tout-en-un (supervisord). Elle télécharge le bundle seulement s'il a changé |
 | `build-package/` | Fabrication de son propre bundle à partir de fichiers `.ndjson.gz` |
@@ -51,7 +51,7 @@ Projet dérivé de `BaseAdresseNationale/addok-docker` (plus maintenu depuis le 
 | `check-health.sh` | Surveillance toutes les 5 minutes (`/health` + recherche de test), alerte Discord en cas de panne et au retour |
 | `notify.sh` | Envoi d'un message Discord (`./notify.sh --test`) |
 | `alert.conf` (non versionné) | Webhook Discord, voir `alert.conf.example` |
-| `tests/smoke.sh` | 9 tests fonctionnels (recherche, fautes, autocomplétion, inverse, filtres, CSV) |
+| `tests/smoke.sh` | 12 tests fonctionnels (recherche, fautes, autocomplétion, inverse, filtres, numéro écrit en lettres, CSV, colonnes candidat, CSV de plus de 1 Mo) |
 | `.github/workflows/ci.yml` | Tests à chaque modification, compatibilité BAN chaque semaine, publication des images |
 
 Les extensions d'addok :
@@ -79,7 +79,7 @@ Les extensions d'addok :
   - Debian 12 → **13 « trixie »** ;
   - Redis 7 → **8.10** ;
   - addok 1.0.3 → **1.3.2** ;
-  - addok-fr → 1.1.0 ;
+  - addok-fr → 1.1.0 (**erreur, revenu à 1.0.1 le 19/10/2026** : voir plus bas) ;
   - addok-france → 1.2.0 ;
   - addok-csv → 1.1.0 ;
   - addok-sqlite-store → 1.1.0 ;
@@ -155,6 +155,41 @@ Les extensions d'addok :
 - `install.sh` : les tâches cron sont gérées par une fonction commune (marqueur + ligne), la tâche de mise à jour et celle de surveillance sont indépendantes.
 - **Bug trouvé : relancer `install.sh` redémarrait l'instance** (coupure d'environ 20 secondes), parce que les images changeaient d'identifiant à chaque construction. Deux causes : addok et Redis étaient construits deux fois sous le même nom (services blue et green, avec des étiquettes différentes), et BuildKit ajoute une attestation de provenance horodatée. Corrections : seuls les services blue construisent les images, les services green les réutilisent (`pull_policy: never`, pour ne jamais télécharger une image du même nom sur Docker Hub), et `install.sh` construit avec `BUILDX_NO_DEFAULT_ATTESTATIONS=1`. Vérifié : identifiants stables et conteneurs non recréés.
 
+**19/10/2026 : test en conditions réelles (fichier OGRB, 35 711 points d'intérêt, France entière)**
+- Fichier `Donnees_ogrb_2026___france_entiere_ref_geo_2025___poi___n_OGRB.txt` : séparateur `;`, **encodage Windows-1252** (espaces insécables), 43 colonnes. Adresse en `NUMVOIE` + `TYPEVOIE` + `NOMVOIE`, avec `code_postal`, `villenorm` et `depcom` (code INSEE). `COMPVOIE` (centres commerciaux, lieux-dits) écarté. Le fichier contient déjà un géocodage de référence (`longitude`, `latitude`, `qualitegeorue`), qui a servi de comparaison.
+- Premier résultat (filtre `citycode=depcom`, puis seconde passe « adresse + code postal + ville » sur les lignes vides, en ne gardant que les résultats dans la bonne commune) : 98,5 % des lignes géocodées, mais seulement 77,5 % au numéro, contre 81 % pour la référence.
+- Résultat après la correction d'addok-fr (voir plus bas) :
+  - 98,7 % des lignes géocodées : 81,3 % au numéro, 15,8 % à la rue, 1,7 % au lieu-dit ou à la commune, 1,3 % sans résultat (453 lignes) ;
+  - écart avec la référence : 71,5 % à moins de 10 m, 88 % à moins de 50 m, 97,3 % à moins de 1 km ; numéro trouvé des deux côtés : écart médian de 0 m ;
+  - débit : environ 420 adresses par seconde (85 s pour le fichier complet).
+- Constats sur la qualité :
+  - le filtre `citycode` donne parfois de moins bons résultats que l'adresse complète en texte libre (« RUE VICOMTE » à Caudebec-en-Caux n'est trouvée qu'avec la ville dans la requête) ;
+  - écarts de plus de 1 km : surtout des communes fusionnées (Saint-Macaire-en-Mauges → Sèvremoine, Campeaux → Souleuvre en Bocage) et La Réunion (Saint-Gilles-les-Bains, La Saline → Saint-Paul), où une adresse homonyme est trouvée ailleurs dans la nouvelle commune ;
+  - addok-csv laisse vide tout résultat de score inférieur à 0,5 (`CSV_MIN_SCORE`) : c'est la cause des lignes sans résultat ;
+  - les lignes sans résultat sont surtout des adresses vagues (« CENTRE URBAIN », « LOTISSEMENT BOURG »), plus nombreuses dans les DOM et en Corse.
+- **Deux limites de `/search/csv` trouvées et corrigées** :
+  1. **Tout fichier de plus de 1 Mo (environ 10 000 adresses) était refusé** (HTTP 400, « body part is too large ») : c'est la limite par défaut de Falcon pour un fichier envoyé, que `client_max_body_size 0` du proxy ne pouvait pas lever. Correction : nouveau point d'entrée `addok/infostat_wsgi.py`, qui relève la limite à `CSV_MAX_SIZE_MB` (50 Mo par défaut), sans toucher au code d'addok.
+  2. **Un traitement de plus de 30 s échouait** (HTTP 500, `WORKER TIMEOUT` de gunicorn). Avec un seul worker, un gros fichier aurait en plus bloqué toutes les autres requêtes, le healthcheck et `check-health.sh` (fausses alertes Discord). Correction : `WORKER_TIMEOUT` passe à 300 s, comme `proxy_read_timeout`, et `WORKERS` passe de 1 à 4 (environ 55 Mo de RAM chacun).
+- Testé sur l'instance réelle :
+  - le nouveau test « CSV de plus de 1 Mo » échoue avant la correction et passe après (10 tests sur 10) ;
+  - le fichier complet (3,1 Mo, 35 711 lignes) passe en une seule requête en 127 s ;
+  - pendant ce traitement, 63 recherches ont répondu en 10 ms au plus, et le healthcheck est resté au vert ;
+  - le redéploiement n'a recréé que le conteneur addok (environ 1 seconde de coupure).
+- README : paramètres `WORKERS`, `WORKER_TIMEOUT`, `CSV_MAX_SIZE_MB`, et nouvelle section « Géocodage de fichiers CSV ».
+- **Défaut de recherche trouvé et corrigé : mauvaise version d'addok-fr.** La ligne 4 (20 avenue du Général Sarrail, Ambérieu) n'était trouvée qu'à la rue, alors que le géocodage inverse trouvait le n° 20 exactement au point de la référence. Cause : l'index de la BAN est construit avec addok-fr 1.0.1, mais la modernisation du 15/10 avait installé addok-fr 1.1.0, qui change une quinzaine de règles de phonétique et ajoute des synonymes. Les numéros de 1 à 20 passent par les synonymes (20 → « vingt ») : l'index range le n° 20 sous `ving`, la 1.1.0 cherchait `vin`. Même chose pour 16 (`seiz`/`sez`), 13 (`treiz`/`trez`) et des mots des noms de voie (vicomte : `vikomt`/`vikont`). J'avais d'abord conclu à tort que ces numéros manquaient dans la BAN.
+  - Trois combinaisons comparées sur tout le fichier, avec deux instances de test branchées sur le même Redis que la production : addok-fr 1.1.0 + addok-france 1.2.0 (avant) : 77,5 % au numéro ; addok-fr 1.0.1 + addok-france 1.1.3 (versions d'origine) : 81,25 % ; **addok-fr 1.0.1 + addok-france 1.2.0 : 81,3 %, 453 lignes sans résultat au lieu de 527 (retenue)**. addok-france 1.2.0 reconnaît plus d'abréviations (`QUART`, `CHE`…) : sur les 60 lignes où les deux dernières combinaisons diffèrent, elle est plus proche de la référence 45 fois sur 59.
+  - 1 314 lignes passent de la rue au numéro ; la position se rapproche de la référence de plus de 50 m pour 699 lignes, et s'en éloigne pour 32.
+  - `addok/requirements.txt` : addok-fr fixé à 1.0.1, avec un commentaire qui explique pourquoi.
+  - addok-fr 1.0.1 garde la phonétique de chaque mot dans un cache sans limite. Les workers sont donc remplacés toutes les 20 000 requêtes (`WORKER_MAX_REQUESTS`, `--max-requests` de gunicorn).
+  - Nouveau test « numéro écrit en lettres » dans `tests/smoke.sh` (20 avenue de Ségur doit être trouvé au numéro) : il échoue avec addok-fr 1.1.0 et passe avec 1.0.1 (11 tests sur 11). Le test de compatibilité de la CI (9 tests) ne voyait pas le problème : les recherches répondaient, mais au niveau de la rue.
+  - Redéployé sur l'instance réelle (seul le conteneur addok est recréé, environ 1 seconde de coupure). Instances et images de test supprimées.
+- **Lignes vides et seuil de score (0,5).** Cas de départ : « 4 PLACE CHARLES GINESY, PEONE » restait vide alors que le code postal et la commune étaient bien dans la requête. La place a changé de nom : la BAN connaît « 4 Place Thomas Guérin », exactement au point de la référence. Le géocodeur l'avait trouvée, mais avec un score de 0,43 (0,33 avec le filtre commune), sous le seuil d'addok-csv.
+  - Mesure sur les 453 lignes vides, avec les réponses sous le seuil : la plupart sont fausses. Entre 0,4 et 0,5, seules 22 % sont à moins de 50 m de la référence (28 % dans la bonne commune). Même la règle la plus stricte (bonne commune + numéro demandé + score de 0,4 à 0,5) se trompe une fois sur trois (10 justes sur 15, 3 à plus de 1 km). **Le seuil de 0,5 est conservé.**
+  - Le seuil existait déjà en réglage : `-F min_score=0.4` pour une requête, `ADDOK_CSV_MIN_SCORE` pour toute l'instance (lu par addok au démarrage). C'est maintenant documenté dans le README, avec la mesure qui le déconseille.
+  - **Nouveau : colonnes « candidat à vérifier ».** Pour une ligne restée vide, `/search/csv` donne quand même la meilleure réponse dans `result_candidat_label`, `_score`, `_type`, `_latitude` et `_longitude`, sans remplir `latitude`/`longitude`. Codé dans `addok/infostat_wsgi.py` (sous-classe de la vue d'addok-csv, qui remplace sa route), sans toucher au code d'addok-csv. Sur le fichier OGRB : 1 761 des 2 055 lignes vides de la passe 1 ont un candidat ; 559 sont à moins de 50 m de la référence et 653 à plus de 1 km, d'où la vérification à la main. Coût : le fichier complet passe en 112 s au lieu de 85 s (une seconde recherche pour chaque ligne vide).
+  - Nouveau test « CSV : colonnes candidat » (12 tests sur 12). Testé sur une instance à part, puis redéployé (environ 1 seconde de coupure).
+- Analyse complète dans `analyses/ogrb-2026-10-19/` : `CONCLUSION.md` (chiffres par précision, par région, causes des écarts, recommandations) et `carte-comparaison.html` (référence et géocodeur sur deux cartes synchronisées).
+
 ## Reste à faire
 
 ### Projet
@@ -164,6 +199,11 @@ Les extensions d'addok :
 - [ ] Tester les images en `linux/arm64` sur une vraie machine ARM (la CI les construit sans les tester ; la machine actuelle n'a pas l'émulation ARM)
 
 ### Améliorations possibles
+- [ ] Script de géocodage de fichiers (`geocode-file.sh`) : conversion de l'encodage, découpage des fichiers de plus de 50 000 lignes, seconde passe « adresse + code postal + ville » sur les lignes vides avec contrôle de la commune, puis bilan. C'est ce qui a été fait à la main pour le fichier OGRB le 19/10/2026
+- [ ] Comprendre pourquoi le filtre `citycode` trouve moins bien que l'adresse complète en texte libre (comportement des filtres dans addok), et choisir la stratégie par défaut
+- [ ] Communes fusionnées : utiliser `oldcity` et `oldcitycode` de la BAN pour mieux trouver les adresses dont la ville est l'ancienne commune
+- [ ] Afficher les candidats à vérifier sur la carte d'analyse, avec un bouton « accepter » ou « rejeter » pour corriger les lignes vides à la main
+- [ ] Vérifier un échantillon tiré au hasard parmi les 3 036 écarts de plus de 100 m (photos aériennes) pour savoir qui, de la référence ou de nous, est le plus juste
 - [ ] Si la RAM manque souvent pour la bascule sans coupure, augmenter la RAM de la machine
 
 ### À surveiller
@@ -171,3 +211,4 @@ Les extensions d'addok :
 - [ ] La CI vérifie chaque semaine (`compat-ban`) que le bundle BAN du moment fonctionne toujours avec nos images : surveiller les échecs, par exemple si la BAN change de version de Redis ou d'addok
 - [ ] Passer à Python 3.15 quand addok le prendra en charge
 - [ ] Suivre les nouvelles versions d'addok : https://github.com/addok/addok/blob/master/CHANGELOG.md
+- [ ] **Ne pas monter addok-fr** au-delà de 1.0.1 tant que la BAN construit son index avec cette version. Si la BAN change de version, le test « numéro écrit en lettres » de `compat-ban` échouera : passer alors à la même version qu'elle

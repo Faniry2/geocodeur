@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Comparaison géocodage OGRB</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #5d6677; --border: #dde1e8;
+  --accent: #2456c8; --sel: #e0e9ff;
+  --c0: #1a9850; --c1: #91cf60; --c2: #e6c229; --c3: #f08a3e; --c4: #d73027; --c5: #8a8f99;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171d; --panel: #1d2129; --text: #e6e9ef; --muted: #9aa3b2; --border: #2e3440;
+    --accent: #7ea2ff; --sel: #26324d;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+header { padding: 14px 16px 6px; }
+h1 { font-size: 19px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin: 0; }
+.kpis { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 16px; }
+.kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; min-width: 130px; }
+.kpi b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+.kpi span { color: var(--muted); font-size: 12px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; padding: 8px 16px; }
+.toolbar label { color: var(--muted); font-size: 13px; }
+select, input[type=search], button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; }
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px; }
+.legend label { display: inline-flex; align-items: center; gap: 5px; background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px 3px 6px; cursor: pointer; color: var(--text); user-select: none; }
+.legend input { margin: 0; }
+.dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; border: 1px solid rgba(0,0,0,.25); }
+.legend .n { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+.zones { display: flex; flex-wrap: wrap; gap: 4px; }
+.zones button { padding: 2px 8px; font-size: 12px; }
+.maps { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 6px 16px; }
+.mapbox { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.mapbox h2 { font-size: 14px; margin: 0; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+.mapbox h2 small { color: var(--muted); font-weight: normal; }
+.map { height: 62vh; min-height: 340px; }
+.bottom { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr); gap: 10px; padding: 6px 16px 24px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.card h3 { margin: 0 0 8px; font-size: 14px; }
+#detail dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 0; }
+#detail dt { color: var(--muted); }
+#detail dd { margin: 0; overflow-wrap: anywhere; }
+#detail .vide { color: var(--muted); }
+.tablewrap { max-height: 360px; overflow: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { position: sticky; top: 0; background: var(--panel); text-align: left; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); padding: 4px 6px; cursor: pointer; white-space: nowrap; }
+td { border-bottom: 1px solid var(--border); padding: 4px 6px; vertical-align: top; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+tbody tr { cursor: pointer; }
+tbody tr:hover, tbody tr.sel { background: var(--sel); }
+.tablehead { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.tablehead h3 { margin: 0; }
+.muted { color: var(--muted); font-size: 12px; }
+.leaflet-container { font: inherit; }
+.bulle { font-size: 13px; line-height: 1.45; color: #1d2330; }
+.bulle hr { border: 0; border-top: 1px solid #dde1e8; margin: 6px 0; }
+.bulle .muted { color: #5d6677; }
+@media (max-width: 900px) {
+  .maps, .bottom { grid-template-columns: 1fr; }
+  .map { height: 48vh; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Comparaison du géocodage : référence OGRB et géocodeur Infostat</h1>
+  <p class="sub">35 711 points d'intérêt (France entière) · BAN chargée le 15/10/2026 · test du 19/10/2026. Les deux cartes sont synchronisées ; cliquer sur un point le montre sur les deux. Les plus gros écarts sont dessinés au-dessus des autres.</p>
+</header>
+
+<div class="kpis" id="kpis"></div>
+
+<div class="toolbar">
+  <div class="legend" id="legend"></div>
+</div>
+<div class="toolbar">
+  <label>Type trouvé
+    <select id="fType">
+      <option value="">tous</option>
+      <option value="housenumber">numéro</option>
+      <option value="street">rue</option>
+      <option value="locality">lieu-dit</option>
+      <option value="municipality">commune</option>
+    </select>
+  </label>
+  <label>Précision de référence
+    <select id="fRef">
+      <option value="">toutes</option>
+      <option value="housenumber">numéro</option>
+      <option value="street">rue</option>
+      <option value="locality">lieu-dit</option>
+      <option value="municipality">commune</option>
+    </select>
+  </label>
+  <label>Passe
+    <select id="fPasse">
+      <option value="">toutes</option>
+      <option value="1">1 (filtre commune)</option>
+      <option value="2">2 (adresse + CP + ville)</option>
+    </select>
+  </label>
+  <label>Fond
+    <select id="fond">
+      <option value="plan">Plan IGN</option>
+      <option value="ortho">Photos aériennes IGN</option>
+      <option value="osm">OpenStreetMap</option>
+    </select>
+  </label>
+  <div class="zones" id="zones"></div>
+</div>
+
+<div class="maps">
+  <div class="mapbox"><h2>Référence <small>(coordonnées du fichier OGRB)</small></h2><div class="map" id="mapRef"></div></div>
+  <div class="mapbox"><h2>Géocodeur Infostat <small>(addok + BAN)</small></h2><div class="map" id="mapNous"></div></div>
+</div>
+
+<div class="bottom">
+  <div class="card" id="detail"><h3>Point sélectionné</h3><p class="vide">Cliquer sur un point d'une carte ou sur une ligne du tableau.</p></div>
+  <div class="card">
+    <div class="tablehead">
+      <h3 id="tableTitle">Points filtrés</h3>
+      <input type="search" id="q" placeholder="Rechercher adresse, ville, nom, n° de ligne" size="34">
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th data-k="0">Ligne</th><th data-k="2">Adresse</th><th data-k="4">Ville</th>
+          <th data-k="9">Trouvé</th><th data-k="10">Score</th><th data-k="13">Écart ▼</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <p class="muted" id="tableNote"></p>
+  </div>
+</div>
+
+<script>
+// [ligne, nom, adresse, cp, ville, ref_qualite, ref_lon, ref_lat, label, type, score, lon, lat, dist_m, passe]
+const P = /*__DONNEES__*/[];
+const I = { ligne: 0, nom: 1, adr: 2, cp: 3, ville: 4, refq: 5, rlon: 6, rlat: 7, label: 8, type: 9, score: 10, lon: 11, lat: 12, dist: 13, passe: 14 };
+
+const CLASSES = [
+  { id: 0, nom: "≤ 10 m", test: d => d !== null && d <= 10, couleur: "--c0" },
+  { id: 1, nom: "10–50 m", test: d => d > 10 && d <= 50, couleur: "--c1" },
+  { id: 2, nom: "50–100 m", test: d => d > 50 && d <= 100, couleur: "--c2" },
+  { id: 3, nom: "100 m–1 km", test: d => d > 100 && d <= 1000, couleur: "--c3" },
+  { id: 4, nom: "> 1 km", test: d => d > 1000, couleur: "--c4" },
+  { id: 5, nom: "sans résultat", test: d => d === null, couleur: "--c5" },
+];
+const css = getComputedStyle(document.documentElement);
+CLASSES.forEach(c => c.hex = css.getPropertyValue(c.couleur).trim());
+const classe = p => CLASSES.find(c => c.test(p[I.dist])).id;
+const TYPES = { housenumber: "numéro", street: "rue", locality: "lieu-dit", municipality: "commune", "": "aucun" };
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pinSvg = (couleur, h = 16) => `<svg width="${h * 0.75}" height="${h}" viewBox="0 0 12 16" aria-hidden="true"><path d="M6 15.3C4.2 12.6 1 9.2 1 6a5 5 0 0 1 10 0c0 3.2-3.2 6.6-5 9.3z" fill="${couleur}" stroke="#1b1f27" stroke-width="1"/><circle cx="6" cy="6" r="1.9" fill="#fff"/></svg>`;
+const fmtDist = d => d === null ? "—" : d >= 1000 ? (d / 1000).toFixed(1).replace(".", ",") + " km" : d + " m";
+const nf = n => n.toLocaleString("fr-FR");
+P.forEach(p => p.cl = classe(p));
+
+// ---- Indicateurs
+const n = P.length, geo = P.filter(p => p[I.type]);
+const pct = x => (100 * x / n).toFixed(1).replace(".", ",") + " %";
+const pctG = x => (100 * x / geo.length).toFixed(1).replace(".", ",") + " %";
+document.getElementById("kpis").innerHTML = [
+  [nf(n), "points"],
+  [pct(geo.length), "géocodés"],
+  [pct(P.filter(p => p[I.type] === "housenumber").length), "trouvés au numéro"],
+  [pctG(geo.filter(p => p[I.dist] <= 10).length), "à moins de 10 m de la réf."],
+  [pctG(geo.filter(p => p[I.dist] <= 100).length), "à moins de 100 m"],
+  [nf(P.filter(p => p.cl === 4).length), "écarts de plus de 1 km"],
+].map(([v, l]) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`).join("");
+
+// ---- Légende = filtre par écart
+const actives = new Set(CLASSES.map(c => c.id));
+document.getElementById("legend").innerHTML = CLASSES.map(c =>
+  `<label><input type="checkbox" data-c="${c.id}" checked>${pinSvg(c.hex)}${c.nom} <span class="n">${nf(P.filter(p => p.cl === c.id).length)}</span></label>`).join("");
+document.querySelectorAll("#legend input").forEach(cb => cb.addEventListener("change", () => {
+  cb.checked ? actives.add(+cb.dataset.c) : actives.delete(+cb.dataset.c); appliquer();
+}));
+
+// ---- Cartes
+const FONDS = {
+  plan: () => L.tileLayer("https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image/png&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}", { maxZoom: 19, attribution: "© IGN – Géoplateforme" }),
+  ortho: () => L.tileLayer("https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image/jpeg&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}", { maxZoom: 19, attribution: "© IGN – Géoplateforme" }),
+  osm: () => L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© contributeurs OpenStreetMap" }),
+};
+function creerCarte(id) {
+  const m = L.map(id, { preferCanvas: true, zoomSnap: 0.5 }).setView([46.6, 2.4], 6);
+  m.fond = FONDS.plan().addTo(m);
+  m.rendu = L.canvas({ padding: 0.5 });
+  m.calque = L.layerGroup().addTo(m);
+  m.selection = L.layerGroup().addTo(m);
+  return m;
+}
+const mapRef = creerCarte("mapRef"), mapNous = creerCarte("mapNous");
+
+// Synchronisation des deux cartes
+let enSync = false;
+function sync(source, cible) {
+  source.on("move zoom", () => {
+    if (enSync) return;
+    enSync = true; cible.setView(source.getCenter(), source.getZoom(), { animate: false }); enSync = false;
+  });
+}
+sync(mapRef, mapNous); sync(mapNous, mapRef);
+
+document.getElementById("fond").addEventListener("change", e => {
+  for (const m of [mapRef, mapNous]) { m.removeLayer(m.fond); m.fond = FONDS[e.target.value]().addTo(m); m.fond.bringToBack(); }
+});
+
+const ZONES = { "France": [[46.6, 2.4], 6], "Corse": [[42.15, 9.1], 8], "Guadeloupe": [[16.2, -61.55], 10], "Martinique": [[14.65, -61.02], 10.5], "Guyane": [[4.4, -53.0], 7.5], "La Réunion": [[-21.12, 55.53], 10], "Mayotte": [[-12.82, 45.15], 11] };
+document.getElementById("zones").innerHTML = Object.keys(ZONES).map(z => `<button data-z="${z}">${z}</button>`).join("");
+document.querySelectorAll("#zones button").forEach(b => b.addEventListener("click", () => mapRef.setView(...ZONES[b.dataset.z])));
+
+// Pin dessiné directement sur le canvas (35 000 icônes HTML par carte seraient trop lentes).
+// La pointe est sur la position ; « radius » est le rayon de la tête, placée PIN_H rayons au-dessus.
+const PIN_H = 2.5;
+const Pin = L.CircleMarker.extend({
+  _updateBounds() {
+    const r = this._radius, w = this._clickTolerance() + (this.options.weight || 0), p = this._point;
+    this._pxBounds = L.bounds(p.subtract([r + w, r * PIN_H + r + w]), p.add([r + w, w]));
+  },
+  _updatePath() {
+    const R = this._renderer;
+    if (!R._drawing || this._empty()) return;
+    const ctx = R._ctx, { x, y } = this._point, r = this._radius, cy = y - r * PIN_H;
+    const b = Math.acos(1 / PIN_H);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.arc(x, cy, r, Math.PI / 2 + b, Math.PI * 2.5 - b);
+    ctx.closePath();
+    R._fillStroke(ctx, this);
+    // Point blanc au centre de la tête, quand le pin est assez grand pour qu'on le voie
+    if (r >= 5) {
+      ctx.beginPath(); ctx.arc(x, cy, r * 0.38, 0, Math.PI * 2);
+      ctx.globalAlpha = 1; ctx.fillStyle = "#fff"; ctx.fill();
+    }
+  },
+  _containsPoint(p) {
+    const r = this._radius, t = this._clickTolerance(), pt = this._point, c = pt.subtract([0, r * PIN_H]);
+    if (p.distanceTo(c) <= r + t) return true;
+    // Partie pointue : triangle entre la tête et la pointe
+    return p.y >= c.y && p.y <= pt.y + t && Math.abs(p.x - pt.x) <= r * (pt.y - p.y) / (r * PIN_H) + t;
+  },
+});
+const pin = (latlng, options) => new Pin(latlng, options);
+
+// Marqueurs créés une seule fois ; les filtres les ajoutent ou les retirent
+const rayon = z => z < 8 ? 3 : z < 11 ? 4 : z < 14 ? 6 : 8;
+const style = p => ({ radius: rayon(6), weight: 1, color: "#1b1f27", opacity: 0.9, fillColor: CLASSES[p.cl].hex, fillOpacity: 1 });
+const mRef = P.map((p, i) => pin([p[I.rlat], p[I.rlon]], { ...style(p), renderer: mapRef.rendu }).on("click", () => choisir(i, false, mapRef)));
+const mNous = P.map((p, i) => p[I.lat] === null ? null : pin([p[I.lat], p[I.lon]], { ...style(p), renderer: mapNous.rendu }).on("click", () => choisir(i, false, mapNous)));
+
+// Taille des points selon le zoom : vue de la France, des points plus petits se masquent moins
+let rayonActuel = rayon(6);
+mapRef.on("zoomend", () => {
+  const r = rayon(mapRef.getZoom());
+  if (r === rayonActuel) return;
+  rayonActuel = r;
+  mRef.forEach(m => m.setRadius(r)); mNous.forEach(m => m && m.setRadius(r));
+});
+
+// ---- Filtres
+let filtres = [];
+const champ = id => document.getElementById(id);
+function passe(p) {
+  return actives.has(p.cl)
+    && (!champ("fType").value || p[I.type] === champ("fType").value)
+    && (!champ("fRef").value || p[I.refq] === champ("fRef").value)
+    && (!champ("fPasse").value || String(p[I.passe]) === champ("fPasse").value);
+}
+function appliquer() {
+  filtres = [];
+  mapRef.calque.clearLayers(); mapNous.calque.clearLayers();
+  // Les écarts les plus grands sont dessinés en dernier, donc au-dessus
+  const ordre = P.map((p, i) => i).filter(i => passe(P[i])).sort((a, b) => (P[a][I.dist] ?? 1e9) - (P[b][I.dist] ?? 1e9));
+  for (const i of ordre) {
+    filtres.push(i);
+    mRef[i].addTo(mapRef.calque);
+    if (mNous[i]) mNous[i].addTo(mapNous.calque);
+  }
+  for (const m of [mapRef, mapNous]) m.selection.eachLayer(l => l.bringToFront());
+  remplirTable();
+}
+["fType", "fRef", "fPasse"].forEach(id => champ(id).addEventListener("change", appliquer));
+
+// ---- Tableau
+let tri = { k: I.dist, desc: true };
+const LIMITE = 500;
+function remplirTable() {
+  const q = champ("q").value.trim().toLowerCase();
+  let lignes = filtres;
+  if (q) lignes = lignes.filter(i => { const p = P[i]; return String(p[I.ligne]) === q || `${p[I.adr]} ${p[I.ville]} ${p[I.nom]} ${p[I.cp]} ${p[I.label]}`.toLowerCase().includes(q); });
+  const k = tri.k, s = tri.desc ? -1 : 1;
+  // Les valeurs vides (sans résultat) restent en fin de tableau, quel que soit le sens du tri
+  lignes = [...lignes].sort((a, b) => {
+    const x = P[a][k], y = P[b][k];
+    if (x === null || y === null) return (x === null) - (y === null);
+    return (x > y ? 1 : x < y ? -1 : 0) * s;
+  });
+  champ("tableTitle").textContent = `Points filtrés : ${nf(lignes.length)}`;
+  champ("tableNote").textContent = lignes.length > LIMITE ? `Seules les ${LIMITE} premières lignes sont affichées : affiner avec les filtres ou la recherche.` : "";
+  champ("tbody").innerHTML = lignes.slice(0, LIMITE).map(i => {
+    const p = P[i];
+    return `<tr data-i="${i}"${i === choisi ? ' class="sel"' : ""}><td class="num">${p[I.ligne]}</td><td>${esc(p[I.adr])}</td><td>${esc(p[I.ville])}</td><td>${TYPES[p[I.type]]}</td><td class="num">${p[I.score] ?? "—"}</td><td class="num"><span class="dot" style="background:${CLASSES[p.cl].hex}"></span> ${fmtDist(p[I.dist])}</td></tr>`;
+  }).join("");
+}
+champ("tbody").addEventListener("click", e => { const tr = e.target.closest("tr"); if (tr) choisir(+tr.dataset.i, true); });
+champ("q").addEventListener("input", remplirTable);
+document.querySelectorAll("th").forEach(th => th.addEventListener("click", () => {
+  const k = +th.dataset.k;
+  tri = { k, desc: tri.k === k ? !tri.desc : k === I.dist || k === I.score };
+  document.querySelectorAll("th").forEach(t => t.textContent = t.textContent.replace(/ [▲▼]$/, ""));
+  th.textContent += tri.desc ? " ▼" : " ▲";
+  remplirTable();
+}));
+
+function popupHtml(p, cote_ref) {
+  const trouve = p[I.type] ? `${esc(p[I.label])}<br>${TYPES[p[I.type]]} · score ${p[I.score]}` : "aucun résultat (score &lt; 0,5)";
+  return `<div class="bulle"><b>${esc(p[I.nom])}</b> <span class="muted">ligne ${p[I.ligne]}</span><br>
+    ${esc(p[I.adr])}, ${esc(p[I.cp])} ${esc(p[I.ville])}
+    <hr>${cote_ref ? `<b>Référence</b> : ${TYPES[p[I.refq]]}<br><b>Trouvé</b> : ` : "<b>Trouvé</b> : "}${trouve}
+    <br><b>Écart</b> : <span class="dot" style="background:${CLASSES[p.cl].hex}"></span> ${fmtDist(p[I.dist])}${p[I.passe] === 2 ? " · passe 2" : ""}
+    <br><a href="#detail">Voir le détail ↓</a></div>`;
+}
+
+// ---- Sélection d'un point : mis en évidence sur les deux cartes, avec le trait entre les deux positions
+let choisi = null;
+function choisir(i, centrer, carte) {
+  choisi = i;
+  const p = P[i], ref = [p[I.rlat], p[I.rlon]], nous = p[I.lat] === null ? null : [p[I.lat], p[I.lon]];
+  for (const m of [mapRef, mapNous]) {
+    m.selection.clearLayers();
+    if (nous) L.polyline([ref, nous], { color: "#2456c8", weight: 2.5, dashArray: "6 5", interactive: false, renderer: m.rendu }).addTo(m.selection);
+  }
+  const choix = { radius: 12, color: "#2456c8", weight: 3, opacity: 1, fillColor: CLASSES[p.cl].hex, fillOpacity: 1, interactive: false };
+  // Même canvas que les pins (renderer) : un second canvas posé au-dessus capterait tous les clics
+  pin(ref, { ...choix, renderer: mapRef.rendu }).addTo(mapRef.selection);
+  if (nous) {
+    // Rappel discret de la position de référence sur la carte de droite
+    pin(ref, { radius: 7, color: "#2456c8", weight: 2, opacity: 1, fillColor: "#fff", fillOpacity: 1, interactive: false, renderer: mapNous.rendu }).addTo(mapNous.selection);
+    pin(nous, { ...choix, renderer: mapNous.rendu }).addTo(mapNous.selection);
+  }
+  if (centrer) {
+    if (nous && p[I.dist] > 30) mapRef.fitBounds(L.latLngBounds([ref, nous]).pad(0.4), { maxZoom: 18 });
+    else mapRef.setView(ref, 18);
+  }
+  // Bulle sur chaque carte, au-dessus du pin sélectionné. Seule la carte cliquée se décale pour
+  // montrer la bulle (l'autre suit grâce à la synchronisation)
+  const bulle = (m, ll) => L.popup({ offset: [0, -40], autoPan: m === carte, maxWidth: 300 }).setLatLng(ll).setContent(popupHtml(p, m === mapRef)).openOn(m);
+  mapRef.closePopup(); mapNous.closePopup();
+  bulle(mapRef, ref);
+  if (nous) bulle(mapNous, nous);
+  champ("detail").innerHTML = `<h3>Ligne ${p[I.ligne]} · ${esc(p[I.nom])}</h3><dl>
+    <dt>Adresse</dt><dd>${esc(p[I.adr])}, ${esc(p[I.cp])} ${esc(p[I.ville])}</dd>
+    <dt>Référence</dt><dd>${TYPES[p[I.refq]]} · ${p[I.rlat]}, ${p[I.rlon]}</dd>
+    <dt>Trouvé</dt><dd>${nous ? esc(p[I.label]) : '<span class="vide">aucun résultat (score &lt; 0,5)</span>'}</dd>
+    ${nous ? `<dt>Type, score</dt><dd>${TYPES[p[I.type]]} · ${p[I.score]}</dd>
+    <dt>Position</dt><dd>${p[I.lat]}, ${p[I.lon]}</dd>` : ""}
+    <dt>Écart</dt><dd><span class="dot" style="background:${CLASSES[p.cl].hex}"></span> ${fmtDist(p[I.dist])}</dd>
+    <dt>Passe</dt><dd>${p[I.passe] === 1 ? "1 (filtre commune)" : p[I.passe] === 2 ? "2 (adresse + CP + ville, moins précise)" : "—"}</dd>
+    </dl>
+    <p><button id="voir">Centrer sur ce point</button></p>`;
+  champ("voir").addEventListener("click", () => choisir(i, true));
+  document.querySelectorAll("#tbody tr").forEach(tr => tr.classList.toggle("sel", +tr.dataset.i === i));
+}
+
+appliquer();
+</script>
+</body>
+</html>

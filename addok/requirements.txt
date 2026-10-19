@@ -1,5 +1,8 @@
 addok[perf]==1.3.2
-addok-fr==1.1.0
+# addok-fr doit rester à la version qui a servi à la BAN pour construire l'index (1.0.1) :
+# la 1.1.0 change les règles de phonétique (20 → « vin » au lieu de « ving », vicomte → « vikont »…)
+# et les mots de la requête ne correspondent plus à ceux de l'index. Vérifier avant toute montée de version.
+addok-fr==1.0.1
 addok-france==1.2.0
 addok-csv==1.1.0
 addok-sqlite-store==1.1.0

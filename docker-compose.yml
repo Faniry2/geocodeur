@@ -22,8 +22,10 @@ x-addok: &addok
   restart: unless-stopped
 
 x-addok-env: &addok-env
-  WORKERS: 1
-  WORKER_TIMEOUT: 30
+  # 4 workers et 300 s (comme proxy_read_timeout) : un gros fichier CSV ne bloque plus le service
+  WORKERS: 4
+  WORKER_TIMEOUT: 300
+  CSV_MAX_SIZE_MB: 50
   LOG_QUERIES: 1
   LOG_NOT_FOUND: 1
   SLOW_QUERIES: 200

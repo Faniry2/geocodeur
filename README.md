@@ -45,7 +45,7 @@ Chaque jour, la BAN publie un **bundle** (`addok-france-bundle.zip`, ~2,4 Go) qu
 | Python | 3.14 (Debian 13 « trixie ») |
 | Redis | 8.10 |
 | addok | 1.3.2 |
-| addok-fr | 1.1.0 |
+| addok-fr | 1.0.1 (version qui a servi à construire l'index de la BAN : la 1.1.0 change la phonétique et fait rater des recherches) |
 | addok-france | 1.2.0 |
 | addok-csv | 1.1.0 (plus maintenu, corrigé dans l'image pour addok 1.3) |
 | addok-sqlite-store | 1.1.0 |
@@ -138,13 +138,27 @@ Le port se règle dans `.env` : `ADDOK_PORT=7878` (défaut). Le reste se règle 
 
 | Paramètre | Description | Défaut |
 |---|---|---|
-| `WORKERS` | Nombre de processus addok | `1` |
-| `WORKER_TIMEOUT` | [Durée maximale d'une requête](https://gunicorn.org/reference/settings/#timeout), en secondes | `30` |
+| `WORKERS` | Nombre de processus addok (environ 55 Mo de RAM chacun). Un fichier CSV occupe un worker pendant tout son traitement : les autres continuent de répondre | `4` |
+| `WORKER_TIMEOUT` | [Durée maximale d'une requête](https://gunicorn.org/reference/settings/#timeout), en secondes (le proxy coupe aussi à 300 s) | `300` |
+| `WORKER_MAX_REQUESTS` | Nombre de requêtes après lequel un worker est remplacé (limite la mémoire du cache de phonétique d'addok-fr 1.0.1) | `20000` |
+| `CSV_MAX_SIZE_MB` | Taille maximale d'un fichier envoyé à `/search/csv` ou `/reverse/csv`, en Mo | `50` |
 | `LOG_QUERIES` | `1` pour journaliser les requêtes dans `logs/queries.log` | `1` |
 | `LOG_NOT_FOUND` | `1` pour journaliser les adresses non trouvées dans `logs/notfound.log` | `1` |
 | `SLOW_QUERIES` | Journalise les requêtes plus lentes que cette durée (ms) dans `logs/slow_queries.log` | `200` |
 
 Les conteneurs tournent avec l'utilisateur `1000` de l'hôte. Pour en utiliser un autre : `HOST_UID=$(id -u) HOST_GID=$(id -g) docker compose up -d` (`update-data.sh` le fait automatiquement).
+
+### Géocodage de fichiers CSV
+
+```bash
+curl -X POST http://localhost:7878/search/csv/ -F data=@adresses.csv -F columns=adresse -F citycode=depcom -o resultat.csv
+```
+
+- `columns` : la ou les colonnes qui forment l'adresse (`-F columns=numero -F columns=voie`) ; les filtres (`postcode`, `citycode`, `type`) prennent le nom d'une colonne ;
+- le fichier doit être en UTF-8 (sinon `-F encoding=cp1252`) ; le séparateur est détecté (sinon `-F delimiter=';'`) ;
+- un résultat dont le score est inférieur à 0,5 est laissé vide. Le seuil se règle pour une requête (`-F min_score=0.4`) ou pour toute l'instance (`ADDOK_CSV_MIN_SCORE: 0.4` dans `x-addok-env`). Le baisser est déconseillé : sur le fichier OGRB (19/10/2026), seules 22 % des réponses entre 0,4 et 0,5 tombaient à moins de 50 m de la position de référence ;
+- pour une ligne restée vide, la meilleure réponse est quand même donnée dans les colonnes `result_candidat_label`, `result_candidat_score`, `result_candidat_type`, `result_candidat_latitude` et `result_candidat_longitude`, **à vérifier à la main** : `latitude` et `longitude` restent vides. Exemple : « 4 place Charles Ginesy, Péone » → candidat « 4 Place Thomas Guérin » (la place a changé de nom) ;
+- débit mesuré : environ 240 adresses par seconde. Au-delà de 300 s de traitement (environ 50 000 adresses), découper le fichier.
 
 ### Filtres
 

@@ -42,10 +42,17 @@ fi
 
 export ADDOK_CONFIG_MODULE="$PATCHED_CONFIG"
 
+# Plusieurs workers : un gros fichier CSV occupe un worker pendant toute sa durée,
+# les autres continuent de répondre (recherches, healthcheck, surveillance).
+# --max-requests : addok-fr 1.0.1 garde la phonétique de chaque mot rencontré dans un cache sans limite,
+# les workers sont donc remplacés régulièrement pour que leur mémoire ne grossisse pas indéfiniment
 exec gunicorn \
-  --workers "${WORKERS:-1}" \
-  --timeout "${WORKER_TIMEOUT:-30}" \
+  --workers "${WORKERS:-4}" \
+  --timeout "${WORKER_TIMEOUT:-300}" \
+  --max-requests "${WORKER_MAX_REQUESTS:-20000}" \
+  --max-requests-jitter 2000 \
   --bind 0.0.0.0:7878 \
   --access-logfile - \
   --no-control-socket \
-  addok.http.wsgi
+  --pythonpath /usr/local/lib/infostat \
+  infostat_wsgi:application
