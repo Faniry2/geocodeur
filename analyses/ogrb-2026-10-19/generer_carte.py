@@ -4,7 +4,9 @@ Usage (depuis la racine du projet) :
     python3 -I analyses/ogrb-2026-10-19/generer_carte.py SOURCE.txt RESULTAT.csv
 
 SOURCE.txt   : fichier OGRB d'origine (séparateur ;, encodage Windows-1252)
-RESULTAT.csv : résultat du géocodage (séparateur ;, UTF-8), colonnes ligne, adresse, ... dist_m, passe
+RESULTAT.csv : résultat du géocodage (séparateur ;, UTF-8), colonnes ligne, adresse, ... dist_m, passe,
+               et pour les lignes vides, si présentes : candidat_label, candidat_type, candidat_score,
+               candidat_longitude, candidat_latitude, candidat_dist_m (candidat à vérifier, score < 0,5)
 """
 import csv
 import json
@@ -21,6 +23,7 @@ def main(source, resultat):
         for r in csv.DictReader(f, delimiter=";"):
             m = meta[r["ligne"]]
             geocode = bool(r["result_type"])
+            candidat = bool(r.get("candidat_label"))
             points.append([
                 int(r["ligne"]),
                 m["NOM"],
@@ -37,6 +40,12 @@ def main(source, resultat):
                 round(float(r["latitude"]), 6) if geocode else None,
                 int(r["dist_m"]) if geocode else None,
                 int(r["passe"]) if r["passe"] else 0,
+                r["candidat_label"] if candidat else None,
+                r["candidat_type"] if candidat else None,
+                round(float(r["candidat_score"]), 2) if candidat else None,
+                round(float(r["candidat_longitude"]), 6) if candidat else None,
+                round(float(r["candidat_latitude"]), 6) if candidat else None,
+                int(r["candidat_dist_m"]) if candidat else None,
             ])
 
     gabarit = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gabarit.html"), encoding="utf-8").read()

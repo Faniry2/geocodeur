@@ -120,7 +120,7 @@ Sur les 453 lignes vides, la plupart des réponses sous le seuil sont pourtant *
 | + dans la bonne commune | 192 | 28 % | 77 |
 | + au numéro demandé (cas de Péone) | 15 | 67 % | 3 |
 
-Le seuil de 0,5 est donc conservé. À la place, le géocodeur donne maintenant, pour chaque ligne vide, **un candidat à vérifier** dans des colonnes à part (`result_candidat_*`). Sur ce fichier, 1 761 lignes vides de la passe 1 en ont un : 559 sont à moins de 50 m de la référence, et 653 à plus de 1 km.
+Le seuil de 0,5 est donc conservé. À la place, le géocodeur donne maintenant, pour chaque ligne vide, **un candidat à vérifier** dans des colonnes à part (`result_candidat_*`). Sur ce fichier, 1 761 lignes vides de la passe 1 en ont un : 559 sont à moins de 50 m de la référence, et 653 à plus de 1 km. Après la passe 2, il reste 453 lignes vides, dont 314 avec un candidat (45 à moins de 50 m de la référence, 140 à plus de 1 km). Ces 314 candidats se vérifient sur la carte, avec les boutons « Accepter » et « Rejeter », puis s'exportent en CSV.
 
 ## Causes des écarts restants
 
@@ -141,7 +141,9 @@ Cas vérifiés à la main :
 | 2 | SG Auvergne-Rhône-Alpes, 1 avenue de Verdun, Ambérieu-en-Bugey | 340 m | **Géocodeur Infostat** | Notre point est le n° 1 de la BAN, au carrefour avec la rue Alexandre Bérard. L'agence s'y trouve bien (vérifié sur Google Maps). La référence est au milieu de l'avenue, où il n'y a aucun n° 1 |
 | 4 | La Poste, 20 avenue du Général Sarrail, Ambérieu-en-Bugey | 203 m avant la correction, 0 m après | **Référence** avant la correction, **égalité** après | Le géocodeur ne trouvait que la rue (point au centre de l'avenue). C'est ce cas qui a révélé le défaut d'addok-fr. Depuis la correction, il trouve le n° 20, exactement au point de la référence |
 
-Deux cas ne permettent pas de conclure pour tout le fichier. Pour trancher, il faudrait vérifier un échantillon tiré au hasard parmi les 3 036 écarts de plus de 100 m.
+| 6519 | BP, 1 rue Émile de Girardin, Bourganeuf | 120 m | **Référence** (emplacement réel de l'agence) | Vérifié sur la carte : l'agence est au point de la référence, qui tombe entre les n° 9 et 11 de la BAN. Notre géocodeur a bien trouvé le n° 1 (score 0,95), au début de la rue, et la numérotation de la BAN est cohérente (1, 3, 5… d'est en ouest). C'est l'adresse du fichier qui ne correspond pas à l'emplacement réel : ce n'est pas corrigeable dans le géocodeur, il faut corriger l'adresse dans le fichier (ou signaler la BAN si sa numérotation est fausse) |
+
+Trois cas ne permettent pas de conclure pour tout le fichier. Ils montrent cependant les trois situations possibles : notre position plus juste (référence approximative), égalité, et référence plus juste parce que l'adresse du fichier ne correspond pas à l'emplacement réel. Pour trancher, il faudrait vérifier un échantillon tiré au hasard parmi les 3 036 écarts de plus de 100 m.
 
 ## Recommandations
 
@@ -154,12 +156,11 @@ Deux cas ne permettent pas de conclure pour tout le fichier. Pour trancher, il f
 - **Pistes d'amélioration** (dans `TODO.md`) :
   - utiliser `oldcity` et `oldcitycode` pour les communes fusionnées ;
   - comprendre le comportement du filtre `citycode` ;
-  - afficher les candidats à vérifier sur la carte, pour corriger les lignes vides à la main.
 
 ## Fichiers
 
 | Fichier | Contenu |
 |---|---|
-| `carte-comparaison.html` | Deux cartes synchronisées (référence à gauche, géocodeur à droite), pins colorés selon l'écart et cliquables, filtres, liste des écarts, fonds Plan IGN, photos aériennes IGN ou OSM. S'ouvre directement dans un navigateur ; les fonds de carte demandent internet |
+| `carte-comparaison.html` | Deux cartes synchronisées (référence à gauche, géocodeur à droite), pins colorés selon l'écart et cliquables, filtres, liste des écarts, fonds photos aériennes IGN (par défaut), Plan IGN ou OSM. Candidats à vérifier en violet, avec les boutons « Accepter » et « Rejeter » et l'export des décisions en CSV. S'ouvre directement dans un navigateur ; les fonds de carte demandent internet |
 | `generer_carte.py` + `gabarit.html` | Régénèrent la carte : `python3 -I analyses/ogrb-2026-10-19/generer_carte.py SOURCE.txt RESULTAT.csv` |
 | `../../Donnees_ogrb_2026_resultat_geocodage.csv` | Résultat ligne par ligne, après correction (`;`, UTF-8) : adresse envoyée, référence, adresse trouvée, type, score, coordonnées, écart en mètres, passe |

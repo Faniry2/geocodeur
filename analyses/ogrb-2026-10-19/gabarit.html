@@ -10,7 +10,7 @@
 :root {
   --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #5d6677; --border: #dde1e8;
   --accent: #2456c8; --sel: #e0e9ff;
-  --c0: #1a9850; --c1: #91cf60; --c2: #e6c229; --c3: #f08a3e; --c4: #d73027; --c5: #8a8f99;
+  --c0: #1a9850; --c1: #91cf60; --c2: #e6c229; --c3: #f08a3e; --c4: #d73027; --c5: #8a8f99; --c6: #9b4dca;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -65,6 +65,13 @@ tbody tr:hover, tbody tr.sel { background: var(--sel); }
 .bulle { font-size: 13px; line-height: 1.45; color: #1d2330; }
 .bulle hr { border: 0; border-top: 1px solid #dde1e8; margin: 6px 0; }
 .bulle .muted { color: #5d6677; }
+.bulle button, #detail .decision button { font-size: 12px; padding: 3px 9px; margin: 6px 4px 0 0; }
+button.accepter { border-color: #1a9850; color: #1a9850; font-weight: 600; }
+button.rejeter { border-color: #d73027; color: #d73027; font-weight: 600; }
+.etat { font-weight: 600; }
+.etat.accepte { color: #1a9850; } .etat.rejete { color: #d73027; } .etat.a_verifier { color: #9b4dca; }
+#verif { gap: 8px 12px; }
+#verif .compte { color: var(--muted); font-size: 13px; }
 @media (max-width: 900px) {
   .maps, .bottom { grid-template-columns: 1fr; }
   .map { height: 48vh; }
@@ -81,6 +88,21 @@ tbody tr:hover, tbody tr.sel { background: var(--sel); }
 
 <div class="toolbar">
   <div class="legend" id="legend"></div>
+</div>
+<div class="toolbar" id="verif">
+  <b>Candidats à vérifier</b>
+  <span class="compte" id="compteVerif"></span>
+  <button id="suivant">Prochain candidat à vérifier ▶</button>
+  <button id="exporter">Exporter les décisions (CSV)</button>
+  <label>Décision
+    <select id="fDecision">
+      <option value="">toutes</option>
+      <option value="a_verifier">à vérifier</option>
+      <option value="accepte">acceptés</option>
+      <option value="rejete">rejetés</option>
+    </select>
+  </label>
+  <span class="muted">Les décisions sont gardées dans ce navigateur : exporter le CSV pour les conserver.</span>
 </div>
 <div class="toolbar">
   <label>Type trouvé
@@ -144,27 +166,40 @@ tbody tr:hover, tbody tr.sel { background: var(--sel); }
 </div>
 
 <script>
-// [ligne, nom, adresse, cp, ville, ref_qualite, ref_lon, ref_lat, label, type, score, lon, lat, dist_m, passe]
+// [ligne, nom, adresse, cp, ville, ref_qualite, ref_lon, ref_lat, label, type, score, lon, lat, dist_m, passe,
+//  candidat_label, candidat_type, candidat_score, candidat_lon, candidat_lat, candidat_dist_m]
+// Candidat : meilleure réponse d'une ligne restée vide (score < 0,5), à vérifier à la main
 const P = /*__DONNEES__*/[];
-const I = { ligne: 0, nom: 1, adr: 2, cp: 3, ville: 4, refq: 5, rlon: 6, rlat: 7, label: 8, type: 9, score: 10, lon: 11, lat: 12, dist: 13, passe: 14 };
+const I = { ligne: 0, nom: 1, adr: 2, cp: 3, ville: 4, refq: 5, rlon: 6, rlat: 7, label: 8, type: 9, score: 10, lon: 11, lat: 12, dist: 13, passe: 14,
+  cLabel: 15, cType: 16, cScore: 17, cLon: 18, cLat: 19, cDist: 20 };
 
+const CANDIDAT = 5;
 const CLASSES = [
-  { id: 0, nom: "≤ 10 m", test: d => d !== null && d <= 10, couleur: "--c0" },
-  { id: 1, nom: "10–50 m", test: d => d > 10 && d <= 50, couleur: "--c1" },
-  { id: 2, nom: "50–100 m", test: d => d > 50 && d <= 100, couleur: "--c2" },
-  { id: 3, nom: "100 m–1 km", test: d => d > 100 && d <= 1000, couleur: "--c3" },
-  { id: 4, nom: "> 1 km", test: d => d > 1000, couleur: "--c4" },
-  { id: 5, nom: "sans résultat", test: d => d === null, couleur: "--c5" },
+  { id: 0, nom: "≤ 10 m", test: p => p[I.dist] !== null && p[I.dist] <= 10, couleur: "--c0" },
+  { id: 1, nom: "10–50 m", test: p => p[I.dist] > 10 && p[I.dist] <= 50, couleur: "--c1" },
+  { id: 2, nom: "50–100 m", test: p => p[I.dist] > 50 && p[I.dist] <= 100, couleur: "--c2" },
+  { id: 3, nom: "100 m–1 km", test: p => p[I.dist] > 100 && p[I.dist] <= 1000, couleur: "--c3" },
+  { id: 4, nom: "> 1 km", test: p => p[I.dist] > 1000, couleur: "--c4" },
+  { id: CANDIDAT, nom: "candidat à vérifier", test: p => p[I.dist] === null && p[I.cLabel] !== null, couleur: "--c6" },
+  { id: 6, nom: "sans résultat", test: p => p[I.dist] === null && p[I.cLabel] === null, couleur: "--c5" },
 ];
 const css = getComputedStyle(document.documentElement);
 CLASSES.forEach(c => c.hex = css.getPropertyValue(c.couleur).trim());
-const classe = p => CLASSES.find(c => c.test(p[I.dist])).id;
+const classe = p => CLASSES.find(c => c.test(p)).id;
 const TYPES = { housenumber: "numéro", street: "rue", locality: "lieu-dit", municipality: "commune", "": "aucun" };
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const pinSvg = (couleur, h = 16) => `<svg width="${h * 0.75}" height="${h}" viewBox="0 0 12 16" aria-hidden="true"><path d="M6 15.3C4.2 12.6 1 9.2 1 6a5 5 0 0 1 10 0c0 3.2-3.2 6.6-5 9.3z" fill="${couleur}" stroke="#1b1f27" stroke-width="1"/><circle cx="6" cy="6" r="1.9" fill="#fff"/></svg>`;
 const fmtDist = d => d === null ? "—" : d >= 1000 ? (d / 1000).toFixed(1).replace(".", ",") + " km" : d + " m";
 const nf = n => n.toLocaleString("fr-FR");
 P.forEach(p => p.cl = classe(p));
+
+// ---- Décisions sur les candidats (accepté / rejeté), par numéro de ligne, gardées dans ce navigateur
+const CLE = "ogrb-2026-10-19-decisions";
+let decisions = {};
+try { decisions = JSON.parse(localStorage.getItem(CLE)) || {}; } catch (e) { decisions = {}; }
+const decision = p => decisions[p[I.ligne]] || "a_verifier";
+const ETATS = { a_verifier: "à vérifier", accepte: "accepté", rejete: "rejeté" };
+const candidats = P.map((p, i) => i).filter(i => P[i].cl === CANDIDAT);
 
 // ---- Indicateurs
 const n = P.length, geo = P.filter(p => p[I.type]);
@@ -258,7 +293,17 @@ const pin = (latlng, options) => new Pin(latlng, options);
 const rayon = z => z < 8 ? 3 : z < 11 ? 4 : z < 14 ? 6 : 8;
 const style = p => ({ radius: rayon(6), weight: 1, color: "#1b1f27", opacity: 0.9, fillColor: CLASSES[p.cl].hex, fillOpacity: 1 });
 const mRef = P.map((p, i) => pin([p[I.rlat], p[I.rlon]], { ...style(p), renderer: mapRef.rendu }).on("click", () => choisir(i, false, mapRef)));
-const mNous = P.map((p, i) => p[I.lat] === null ? null : pin([p[I.lat], p[I.lon]], { ...style(p), renderer: mapNous.rendu }).on("click", () => choisir(i, false, mapNous)));
+// Candidat : translucide avec un contour en pointillés tant qu'il n'est pas vérifié, plein une fois accepté
+const styleCandidat = p => decision(p) === "accepte"
+  ? { ...style(p), dashArray: null }
+  : { ...style(p), fillOpacity: 0.45, color: CLASSES[CANDIDAT].hex, weight: 2, dashArray: "3 2" };
+const posNous = p => p[I.lat] !== null ? [p[I.lat], p[I.lon]] : p[I.cLat] !== null ? [p[I.cLat], p[I.cLon]] : null;
+const mNous = P.map((p, i) => {
+  const pos = posNous(p);
+  if (!pos) return null;
+  const st = p.cl === CANDIDAT ? styleCandidat(p) : style(p);
+  return pin(pos, { ...st, renderer: mapNous.rendu }).on("click", () => choisir(i, false, mapNous));
+});
 
 // Taille des points selon le zoom : vue de la France, des points plus petits se masquent moins
 let rayonActuel = rayon(6);
@@ -276,7 +321,8 @@ function passe(p) {
   return actives.has(p.cl)
     && (!champ("fType").value || p[I.type] === champ("fType").value)
     && (!champ("fRef").value || p[I.refq] === champ("fRef").value)
-    && (!champ("fPasse").value || String(p[I.passe]) === champ("fPasse").value);
+    && (!champ("fPasse").value || String(p[I.passe]) === champ("fPasse").value)
+    && (!champ("fDecision").value || (p.cl === CANDIDAT && decision(p) === champ("fDecision").value));
 }
 function appliquer() {
   filtres = [];
@@ -286,12 +332,13 @@ function appliquer() {
   for (const i of ordre) {
     filtres.push(i);
     mRef[i].addTo(mapRef.calque);
-    if (mNous[i]) mNous[i].addTo(mapNous.calque);
+    // Un candidat rejeté n'a pas de position chez nous
+    if (mNous[i] && !(P[i].cl === CANDIDAT && decision(P[i]) === "rejete")) mNous[i].addTo(mapNous.calque);
   }
   for (const m of [mapRef, mapNous]) m.selection.eachLayer(l => l.bringToFront());
   remplirTable();
 }
-["fType", "fRef", "fPasse"].forEach(id => champ(id).addEventListener("change", appliquer));
+["fType", "fRef", "fPasse", "fDecision"].forEach(id => champ(id).addEventListener("change", appliquer));
 
 // ---- Tableau
 let tri = { k: I.dist, desc: true };
@@ -311,7 +358,11 @@ function remplirTable() {
   champ("tableNote").textContent = lignes.length > LIMITE ? `Seules les ${LIMITE} premières lignes sont affichées : affiner avec les filtres ou la recherche.` : "";
   champ("tbody").innerHTML = lignes.slice(0, LIMITE).map(i => {
     const p = P[i];
-    return `<tr data-i="${i}"${i === choisi ? ' class="sel"' : ""}><td class="num">${p[I.ligne]}</td><td>${esc(p[I.adr])}</td><td>${esc(p[I.ville])}</td><td>${TYPES[p[I.type]]}</td><td class="num">${p[I.score] ?? "—"}</td><td class="num"><span class="dot" style="background:${CLASSES[p.cl].hex}"></span> ${fmtDist(p[I.dist])}</td></tr>`;
+    const cand = p.cl === CANDIDAT;
+    const trouve = cand ? `<span class="etat ${decision(p)}">candidat ${ETATS[decision(p)]}</span>` : TYPES[p[I.type]];
+    const score = cand ? `<span class="muted">${p[I.cScore]}</span>` : p[I.score] ?? "—";
+    const ecart = cand ? `<span class="muted">≈ ${fmtDist(p[I.cDist])}</span>` : fmtDist(p[I.dist]);
+    return `<tr data-i="${i}"${i === choisi ? ' class="sel"' : ""}><td class="num">${p[I.ligne]}</td><td>${esc(p[I.adr])}</td><td>${esc(p[I.ville])}</td><td>${trouve}</td><td class="num">${score}</td><td class="num"><span class="dot" style="background:${CLASSES[p.cl].hex}"></span> ${ecart}</td></tr>`;
   }).join("");
 }
 champ("tbody").addEventListener("click", e => { const tr = e.target.closest("tr"); if (tr) choisir(+tr.dataset.i, true); });
@@ -324,7 +375,23 @@ document.querySelectorAll("th").forEach(th => th.addEventListener("click", () =>
   remplirTable();
 }));
 
+function boutonsDecision(i) {
+  const p = P[i], d = decision(p);
+  return `<span class="decision">
+    ${d !== "accepte" ? `<button class="accepter" data-i="${i}" data-decision="accepte">✓ Accepter</button>` : ""}
+    ${d !== "rejete" ? `<button class="rejeter" data-i="${i}" data-decision="rejete">✗ Rejeter</button>` : ""}
+    ${d !== "a_verifier" ? `<button data-i="${i}" data-decision="a_verifier">Annuler</button>` : ""}</span>`;
+}
 function popupHtml(p, cote_ref) {
+  const i = P.indexOf(p);
+  if (p.cl === CANDIDAT) {
+    return `<div class="bulle"><b>${esc(p[I.nom])}</b> <span class="muted">ligne ${p[I.ligne]}</span><br>
+      ${esc(p[I.adr])}, ${esc(p[I.cp])} ${esc(p[I.ville])}
+      <hr><b>Candidat</b> : ${esc(p[I.cLabel])}<br>${TYPES[p[I.cType]]} · score ${p[I.cScore]} (sous le seuil de 0,5)
+      <br><b>Écart avec la réf.</b> : ${fmtDist(p[I.cDist])}
+      <br><b>État</b> : <span class="etat ${decision(p)}">${ETATS[decision(p)]}</span>
+      <br>${boutonsDecision(i)}</div>`;
+  }
   const trouve = p[I.type] ? `${esc(p[I.label])}<br>${TYPES[p[I.type]]} · score ${p[I.score]}` : "aucun résultat (score &lt; 0,5)";
   return `<div class="bulle"><b>${esc(p[I.nom])}</b> <span class="muted">ligne ${p[I.ligne]}</span><br>
     ${esc(p[I.adr])}, ${esc(p[I.cp])} ${esc(p[I.ville])}
@@ -337,10 +404,13 @@ function popupHtml(p, cote_ref) {
 let choisi = null;
 function choisir(i, centrer, carte) {
   choisi = i;
-  const p = P[i], ref = [p[I.rlat], p[I.rlon]], nous = p[I.lat] === null ? null : [p[I.lat], p[I.lon]];
+  const p = P[i], ref = [p[I.rlat], p[I.rlon]], cand = p.cl === CANDIDAT;
+  // Pour un candidat rejeté, rien n'est montré sur la carte de droite
+  const nous = cand && decision(p) === "rejete" ? null : posNous(p);
+  const trait = cand ? CLASSES[CANDIDAT].hex : "#2456c8";
   for (const m of [mapRef, mapNous]) {
     m.selection.clearLayers();
-    if (nous) L.polyline([ref, nous], { color: "#2456c8", weight: 2.5, dashArray: "6 5", interactive: false, renderer: m.rendu }).addTo(m.selection);
+    if (nous) L.polyline([ref, nous], { color: trait, weight: 2.5, dashArray: "6 5", interactive: false, renderer: m.rendu }).addTo(m.selection);
   }
   const choix = { radius: 12, color: "#2456c8", weight: 3, opacity: 1, fillColor: CLASSES[p.cl].hex, fillOpacity: 1, interactive: false };
   // Même canvas que les pins (renderer) : un second canvas posé au-dessus capterait tous les clics
@@ -351,7 +421,7 @@ function choisir(i, centrer, carte) {
     pin(nous, { ...choix, renderer: mapNous.rendu }).addTo(mapNous.selection);
   }
   if (centrer) {
-    if (nous && p[I.dist] > 30) mapRef.fitBounds(L.latLngBounds([ref, nous]).pad(0.4), { maxZoom: 18 });
+    if (nous && (p[I.dist] ?? p[I.cDist]) > 30) mapRef.fitBounds(L.latLngBounds([ref, nous]).pad(0.4), { maxZoom: 18 });
     else mapRef.setView(ref, 18);
   }
   // Bulle sur chaque carte, au-dessus du pin sélectionné. Seule la carte cliquée se décale pour
@@ -363,9 +433,14 @@ function choisir(i, centrer, carte) {
   champ("detail").innerHTML = `<h3>Ligne ${p[I.ligne]} · ${esc(p[I.nom])}</h3><dl>
     <dt>Adresse</dt><dd>${esc(p[I.adr])}, ${esc(p[I.cp])} ${esc(p[I.ville])}</dd>
     <dt>Référence</dt><dd>${TYPES[p[I.refq]]} · ${p[I.rlat]}, ${p[I.rlon]}</dd>
-    <dt>Trouvé</dt><dd>${nous ? esc(p[I.label]) : '<span class="vide">aucun résultat (score &lt; 0,5)</span>'}</dd>
-    ${nous ? `<dt>Type, score</dt><dd>${TYPES[p[I.type]]} · ${p[I.score]}</dd>
-    <dt>Position</dt><dd>${p[I.lat]}, ${p[I.lon]}</dd>` : ""}
+    ${cand ? `<dt>Trouvé</dt><dd><span class="vide">aucun résultat au-dessus du seuil (0,5)</span></dd>
+    <dt>Candidat</dt><dd>${esc(p[I.cLabel])}</dd>
+    <dt>Type, score</dt><dd>${TYPES[p[I.cType]]} · ${p[I.cScore]}</dd>
+    <dt>Position</dt><dd>${p[I.cLat]}, ${p[I.cLon]} <span class="muted">(≈ ${fmtDist(p[I.cDist])} de la réf.)</span></dd>
+    <dt>État</dt><dd><span class="etat ${decision(p)}">${ETATS[decision(p)]}</span> ${boutonsDecision(i)}</dd>`
+    : `<dt>Trouvé</dt><dd>${p[I.type] ? esc(p[I.label]) : '<span class="vide">aucun résultat</span>'}</dd>
+    ${p[I.type] ? `<dt>Type, score</dt><dd>${TYPES[p[I.type]]} · ${p[I.score]}</dd>
+    <dt>Position</dt><dd>${p[I.lat]}, ${p[I.lon]}</dd>` : ""}`}
     <dt>Écart</dt><dd><span class="dot" style="background:${CLASSES[p.cl].hex}"></span> ${fmtDist(p[I.dist])}</dd>
     <dt>Passe</dt><dd>${p[I.passe] === 1 ? "1 (filtre commune)" : p[I.passe] === 2 ? "2 (adresse + CP + ville, moins précise)" : "—"}</dd>
     </dl>
@@ -374,6 +449,47 @@ function choisir(i, centrer, carte) {
   document.querySelectorAll("#tbody tr").forEach(tr => tr.classList.toggle("sel", +tr.dataset.i === i));
 }
 
+function majCompte() {
+  const c = { a_verifier: 0, accepte: 0, rejete: 0 };
+  candidats.forEach(i => c[decision(P[i])]++);
+  champ("compteVerif").textContent = `${nf(candidats.length)} candidats · ${nf(c.accepte)} acceptés · ${nf(c.rejete)} rejetés · ${nf(c.a_verifier)} à vérifier`;
+}
+function decider(i, d) {
+  const p = P[i];
+  if (d === "a_verifier") delete decisions[p[I.ligne]]; else decisions[p[I.ligne]] = d;
+  try { localStorage.setItem(CLE, JSON.stringify(decisions)); } catch (e) { /* navigation privée : décisions perdues à la fermeture */ }
+  if (mNous[i]) mNous[i].setStyle(styleCandidat(p));
+  majCompte();
+  appliquer();
+  choisir(i, false, mapNous);
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("button[data-decision]");
+  if (b) decider(+b.dataset.i, b.dataset.decision);
+});
+champ("suivant").addEventListener("click", () => {
+  // Prochain candidat à vérifier après celui sélectionné (ou le premier)
+  const reste = candidats.filter(i => decision(P[i]) === "a_verifier");
+  if (!reste.length) return;
+  const suivant = reste.find(i => i > (choisi ?? -1)) ?? reste[0];
+  choisir(suivant, true);
+});
+champ("exporter").addEventListener("click", () => {
+  const cell = v => /[;"\n]/.test(String(v ?? "")) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? "");
+  const lignes = [["ligne", "nom", "adresse", "code_postal", "ville", "decision", "candidat_label", "candidat_type", "candidat_score", "latitude", "longitude", "ecart_ref_m"]];
+  for (const i of candidats) {
+    const p = P[i];
+    lignes.push([p[I.ligne], p[I.nom], p[I.adr], p[I.cp], p[I.ville], ETATS[decision(p)], p[I.cLabel], p[I.cType], p[I.cScore], p[I.cLat], p[I.cLon], p[I.cDist]]);
+  }
+  const csv = "\ufeff" + lignes.map(l => l.map(cell).join(";")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.download = "ogrb-2026-10-19-decisions-candidats.csv";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+
+majCompte();
 appliquer();
 </script>
 </body>
