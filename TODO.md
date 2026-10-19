@@ -206,6 +206,8 @@ Les extensions d'addok :
 - [ ] Vérifier un échantillon tiré au hasard parmi les 3 036 écarts de plus de 100 m (photos aériennes) pour savoir qui, de la référence ou de nous, est le plus juste
 - [ ] Si la RAM manque souvent pour la bascule sans coupure, augmenter la RAM de la machine
 
+- [ ] Signaler à la BAN (adresse.data.gouv.fr, onglet « Signaler », ou mairie de Bourganeuf) la numérotation de la rue Émile de Girardin à Bourganeuf : le n° 1 est placé à l'autre bout de la rue, alors que l'agence BP et Google Maps le situent au carrefour de l'avenue René Viviani (ligne 6519 du fichier OGRB, voir `analyses/ogrb-2026-10-19/CONCLUSION.md`). Les numéros impairs semblent inversés
+
 ### À surveiller
 - [ ] Redis 8 est sous AGPLv3, RSALv2 ou SSPLv1. Rien à faire en interne ; si ça pose problème, Valkey (licence BSD) peut le remplacer
 - [ ] La CI vérifie chaque semaine (`compat-ban`) que le bundle BAN du moment fonctionne toujours avec nos images : surveiller les échecs, par exemple si la BAN change de version de Redis ou d'addok
